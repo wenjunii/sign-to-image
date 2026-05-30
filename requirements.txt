@@ -1,0 +1,9 @@
+# Webcam sign recognition bridge
+opencv-python
+mediapipe
+numpy
+pythonosc
+
+# Optional: install a custom classifier runtime here later, for example
+# tensorflow
+# onnxruntime
