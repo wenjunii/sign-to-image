@@ -42,7 +42,7 @@ Copy-Item .env.example .env
 ## Usage
 
 1. Open your TouchDesigner StreamDiffusionTD project.
-2. Make sure the OSC In DAT is listening on port `7000`.
+2. Make sure the OSC In DAT is listening on port `7001`.
 3. Run the bridge:
 
 ```powershell
@@ -82,7 +82,7 @@ Common settings:
 
 ```env
 OSC_IP=127.0.0.1
-OSC_PORT=7000
+OSC_PORT=7001
 CAMERA_INDEX=0
 SIGN_COMMIT_MODE=auto
 SIGN_HOLD_SECONDS=0.75

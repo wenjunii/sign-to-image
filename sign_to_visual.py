@@ -347,7 +347,7 @@ def make_config(args: argparse.Namespace) -> PipelineConfig:
         mirror_camera=False if args.no_mirror else env_bool("MIRROR_CAMERA", True),
         show_preview=False if args.no_preview else env_bool("SHOW_PREVIEW", True),
         osc_ip=args.osc_ip or os.environ.get("OSC_IP", "127.0.0.1"),
-        osc_port=args.osc_port or env_int("OSC_PORT", 7000),
+        osc_port=args.osc_port or env_int("OSC_PORT", 7001),
         osc_prompt_address=os.environ.get("OSC_PROMPT_ADDRESS", "/prompt"),
         osc_partial_text_address=os.environ.get("OSC_PARTIAL_TEXT_ADDRESS", "/partial_text"),
         osc_gesture_address=os.environ.get("OSC_GESTURE_ADDRESS", "/gesture"),
