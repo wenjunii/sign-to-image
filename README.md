@@ -68,6 +68,48 @@ That video-import path is not included in the helper scripts yet. If you use
 recorded videos later, keep them close to the real installation setup: same
 signer, camera angle, distance, framing, lighting, and background.
 
+## Reusing a Trained Model
+
+The signer should not need to train the model every time. After training, the
+model is saved to:
+
+```text
+models/temporal_sign_model.pkl
+```
+
+Future runs can reuse that model by keeping the file and setting:
+
+```env
+SIGN_RECOGNITION_BACKEND=temporal_model
+SIGN_MODEL_PATH=models/temporal_sign_model.pkl
+```
+
+Retrain or fine-tune only when something important changes: a new signer, new
+vocabulary, a very different camera angle, different lighting or framing,
+different signing distance, or recurring sign confusions.
+
+The trained model can also be reused in another future pipeline if that
+pipeline uses the same input shape:
+
+```text
+MediaPipe hand landmarks -> temporal_features.py -> temporal_model.py -> model file
+```
+
+For portability, keep a private signer model bundle with:
+
+```text
+models/temporal_sign_model.pkl
+temporal_features.py
+temporal_model.py
+requirements.txt
+optional: data/clips/ training examples
+```
+
+Treat saved clips and trained models as personal data because they reflect the
+signer's body movement and signing style. Do not publish or share them unless
+the signer explicitly agrees. `data/clips/` and `models/` are ignored by Git by
+default.
+
 ## Installation
 
 ```powershell
