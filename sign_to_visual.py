@@ -20,6 +20,7 @@ from prompting import (
 cv2 = None
 mp = None
 udp_client = None
+ALLOW_LOCAL_VENV_REEXEC = False
 
 
 def load_runtime_dependencies() -> None:
@@ -38,7 +39,10 @@ def load_runtime_dependencies() -> None:
     except ImportError:
         missing.append("mediapipe")
     else:
-        mp = mp_module
+        if not hasattr(mp_module, "solutions") or not hasattr(mp_module.solutions, "hands"):
+            missing.append("mediapipe with legacy solutions.hands support")
+        else:
+            mp = mp_module
 
     try:
         from pythonosc import udp_client as udp_client_module
@@ -48,11 +52,26 @@ def load_runtime_dependencies() -> None:
         udp_client = udp_client_module
 
     if missing:
+        venv_python = local_venv_python()
+        if ALLOW_LOCAL_VENV_REEXEC and venv_python:
+            print(f"Missing dependencies in {sys.executable}; retrying with project venv.", flush=True)
+            os.execv(venv_python, [venv_python, os.path.abspath(__file__), *sys.argv[1:]])
+
         raise RuntimeError(
             "Missing runtime dependencies: "
             + ", ".join(missing)
             + ". Install them with: pip install -r requirements.txt"
         )
+
+
+def local_venv_python() -> str | None:
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    candidate = os.path.join(project_root, ".venv", "Scripts", "python.exe")
+    if not os.path.exists(candidate):
+        return None
+    if os.path.abspath(candidate).lower() == os.path.abspath(sys.executable).lower():
+        return None
+    return candidate
 
 
 def load_env_file(path: str = ".env") -> None:
@@ -362,6 +381,9 @@ def make_config(args: argparse.Namespace) -> PipelineConfig:
 
 
 def main() -> int:
+    global ALLOW_LOCAL_VENV_REEXEC
+    ALLOW_LOCAL_VENV_REEXEC = True
+
     load_env_file()
     args = parse_args()
     config = make_config(args)

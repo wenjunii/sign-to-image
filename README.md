@@ -39,6 +39,13 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
+You can also use the Windows launcher, which creates `.venv` and installs
+missing dependencies automatically:
+
+```powershell
+.\run.ps1
+```
+
 ## Usage
 
 1. Open your TouchDesigner StreamDiffusionTD project.
@@ -46,19 +53,19 @@ Copy-Item .env.example .env
 3. Run the bridge:
 
 ```powershell
-python sign_to_visual.py
+.\run.ps1
 ```
 
 If you want manual commit mode, where Space appends the currently detected sign:
 
 ```powershell
-python sign_to_visual.py --commit-mode manual
+.\run.ps1 --commit-mode manual
 ```
 
 If your camera is not index `0`:
 
 ```powershell
-python sign_to_visual.py --camera 1
+.\run.ps1 --camera 1
 ```
 
 ## Controls

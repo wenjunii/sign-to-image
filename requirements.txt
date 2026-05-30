@@ -1,7 +1,7 @@
 # Webcam sign recognition bridge
-opencv-python
-mediapipe
+mediapipe==0.10.14
 numpy
+opencv-contrib-python
 python-osc
 
 # Optional: install a custom classifier runtime here later, for example
