@@ -17,6 +17,8 @@ env/
 # Local captures and generated visual artifacts
 captures/
 outputs/
+data/clips/
+models/
 
 # OS/editor noise
 .DS_Store

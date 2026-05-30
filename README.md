@@ -14,6 +14,7 @@ It references the structure of `voice-to-visual-sdtd`, but swaps Whisper/audio c
 
 - Live webcam capture with MediaPipe hand landmarks.
 - Rule-based ASL fingerspelling prototype for static handshapes: `A B C D E F I L O U V W Y`.
+- Trained temporal model path for signer-specific gesture clips.
 - Two-hand commands:
   - two open palms: send prompt
   - open palm plus closed fist: insert space
@@ -24,11 +25,14 @@ It references the structure of `voice-to-visual-sdtd`, but swaps Whisper/audio c
   - `/gesture` receives the committed sign token
 - Same visual identity controls as the voice project: gender, age, and visual representation mode.
 
-## Important Limit
+## Recognition Modes
 
-The built-in recognizer is a prototype. It is good for testing the full sign-to-image loop and simple fingerspelling, but full sign language recognition needs a trained temporal model because real signing includes motion, grammar, facial expression, body pose, and context.
+The default `rule_based` recognizer is useful for testing the full sign-to-image
+loop and simple fingerspelling.
 
-The useful architecture is already here: swap `RuleBasedASLRecognizer` in `gesture_rules.py` for a trained ASL or sign-language-recognition model, and keep the OSC / prompt pipeline unchanged.
+The `temporal_model` recognizer loads a trained signer-specific classifier from
+`SIGN_MODEL_PATH`. It uses short MediaPipe hand landmark clips instead of a
+single static handshape, so it can learn signs with motion.
 
 ## Installation
 
@@ -68,6 +72,42 @@ If your camera is not index `0`:
 .\run.ps1 --camera 1
 ```
 
+## Trained Temporal Model Workflow
+
+Collect clips for each sign token you want the model to recognize. Use single
+letters like `A`, or word tokens like `WORD:river`.
+
+```powershell
+.\.venv\Scripts\python.exe collect_gesture_clips.py --label A --count 30
+.\.venv\Scripts\python.exe collect_gesture_clips.py --label B --count 30
+.\.venv\Scripts\python.exe collect_gesture_clips.py --label WORD:river --count 30
+```
+
+In the collection window, press `r` to record each clip and `q` to exit. Aim for
+20-40 clips per label from the actual signer and camera setup.
+
+Train the temporal classifier:
+
+```powershell
+.\.venv\Scripts\python.exe train_temporal_model.py --data data/clips --output models/temporal_sign_model.pkl
+```
+
+Enable it in `.env`:
+
+```env
+SIGN_RECOGNITION_BACKEND=temporal_model
+SIGN_MODEL_PATH=models/temporal_sign_model.pkl
+```
+
+Then run the bridge:
+
+```powershell
+.\run.ps1 --commit-mode manual
+```
+
+Manual mode is best for the first pass because it lets you verify predictions
+before committing them into the prompt text.
+
 ## Controls
 
 | Key | Action |
@@ -91,6 +131,8 @@ Common settings:
 OSC_IP=127.0.0.1
 OSC_PORT=7001
 CAMERA_INDEX=0
+SIGN_RECOGNITION_BACKEND=rule_based
+SIGN_MODEL_PATH=models/temporal_sign_model.pkl
 SIGN_COMMIT_MODE=auto
 SIGN_HOLD_SECONDS=0.75
 AUTO_SEND_PROMPT=true
@@ -100,11 +142,12 @@ Set `AUTO_SEND_PROMPT=false` if you only want prompts sent when you press Enter 
 
 ## How To Make It Better
 
-For an installation or performance piece, the next upgrade is a trained recognizer:
+For an installation or performance piece, the next upgrade after the local
+temporal classifier is a deeper temporal recognizer:
 
 1. Collect gesture clips from the actual signer and camera setup.
 2. Train a temporal model on MediaPipe hand, pose, and face landmarks.
 3. Export it to ONNX or TensorFlow Lite.
-4. Replace `RuleBasedASLRecognizer` with a model-backed recognizer that returns the same `GestureResult` shape.
+4. Replace the scikit-learn classifier with a model-backed recognizer that returns the same `GestureResult` shape.
 
 That gets you from simple fingerspelling into phrase-level sign recognition without changing the StreamDiffusion side.

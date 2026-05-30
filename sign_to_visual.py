@@ -16,6 +16,7 @@ from prompting import (
     PromptState,
     SignedTextBuffer,
 )
+from temporal_model import TemporalModelRecognizer
 
 cv2 = None
 mp = None
@@ -30,7 +31,7 @@ def load_runtime_dependencies() -> None:
     try:
         import cv2 as cv2_module
     except ImportError:
-        missing.append("opencv-python")
+        missing.append("opencv-contrib-python")
     else:
         cv2 = cv2_module
 
@@ -140,6 +141,8 @@ class PipelineConfig:
     release_seconds: float
     repeat_cooldown_seconds: float
     max_text_chars: int
+    recognition_backend: str
+    temporal_model_path: str
 
 
 class SignToVisualPipeline:
@@ -147,7 +150,10 @@ class SignToVisualPipeline:
         load_runtime_dependencies()
 
         self.config = config
-        self.recognizer = RuleBasedASLRecognizer()
+        self.rule_recognizer = RuleBasedASLRecognizer()
+        self.temporal_recognizer = None
+        if config.recognition_backend == "temporal_model":
+            self.temporal_recognizer = TemporalModelRecognizer(config.temporal_model_path)
         self.committer = GestureCommitter(
             hold_seconds=config.hold_seconds,
             release_seconds=config.release_seconds,
@@ -184,6 +190,9 @@ class SignToVisualPipeline:
         print("SIGN TO VISUAL STREAMDIFFUSION BRIDGE")
         print(f"OSC target: {self.config.osc_ip}:{self.config.osc_port}")
         print(f"Commit mode: {self.config.commit_mode}")
+        print(f"Recognizer: {self.config.recognition_backend}")
+        if self.temporal_recognizer is not None:
+            print(f"Model: {self.temporal_recognizer.info.path}")
         print("Keys: Space commit/space | Enter send | Backspace delete | c clear | q/Esc exit")
         print("Identity: m man | w woman | n neutral | 1 young | 2 adult | 3 elder")
         print("Visual: d Asian American | b Black and Brown | x Asian + Black and Brown")
@@ -228,17 +237,25 @@ class SignToVisualPipeline:
             if index < len(handedness):
                 hand_label = handedness[index].classification[0].label
 
-            result = self.recognizer.recognize_single(landmarks.landmark, hand_label)
+            result = self.rule_recognizer.recognize_single(landmarks.landmark, hand_label)
             if result is not None:
                 detections.append(result)
 
             if self.config.show_preview:
                 self.mp_draw.draw_landmarks(frame, landmarks, self.mp_hands.HAND_CONNECTIONS)
 
-        command = self.recognizer.recognize_command(detections)
+        command = self.rule_recognizer.recognize_command(detections)
         if command is not None:
             self.last_detected = command
             return command
+
+        if self.temporal_recognizer is not None:
+            active = self.temporal_recognizer.recognize_frame(hand_landmarks, handedness)
+            if active is None or active.confidence < self.config.min_confidence:
+                self.last_detected = None
+                return None
+            self.last_detected = active
+            return active
 
         confident = [item for item in detections if item.confidence >= self.config.min_confidence]
         if not confident:
@@ -269,7 +286,7 @@ class SignToVisualPipeline:
         elif key == ord("c"):
             self.apply_token("CLEAR", source="keyboard")
         elif key == ord(" "):
-            if self.config.commit_mode == "manual" and active and active.kind == "letter":
+            if self.config.commit_mode == "manual" and active and active.kind in {"letter", "word"}:
                 self.apply_token(active.label, source="manual")
             else:
                 self.apply_token("SPACE", source="keyboard")
@@ -346,6 +363,7 @@ class SignToVisualPipeline:
                 f"Mode: {self.config.commit_mode} | "
                 f"{self.prompt_state.gender}/{self.prompt_state.age}/{self.prompt_state.visual_mode}"
             ),
+            f"Backend: {self.config.recognition_backend}",
         ]
 
         x = 14
@@ -377,6 +395,8 @@ def make_config(args: argparse.Namespace) -> PipelineConfig:
         release_seconds=env_float("SIGN_RELEASE_SECONDS", 0.25),
         repeat_cooldown_seconds=env_float("SIGN_REPEAT_COOLDOWN_SECONDS", 1.8),
         max_text_chars=env_int("MAX_TEXT_CHARS", 160),
+        recognition_backend=os.environ.get("SIGN_RECOGNITION_BACKEND", "rule_based").strip().lower(),
+        temporal_model_path=os.environ.get("SIGN_MODEL_PATH", "models/temporal_sign_model.pkl"),
     )
 
 
@@ -392,9 +412,9 @@ def main() -> int:
         print(f"Unknown SIGN_COMMIT_MODE '{config.commit_mode}', falling back to auto.")
         config.commit_mode = "auto"
 
-    backend = os.environ.get("SIGN_RECOGNITION_BACKEND", "rule_based").strip().lower()
-    if backend != "rule_based":
-        print(f"SIGN_RECOGNITION_BACKEND={backend} is not implemented yet; using rule_based.")
+    if config.recognition_backend not in {"rule_based", "temporal_model"}:
+        print(f"Unknown SIGN_RECOGNITION_BACKEND '{config.recognition_backend}', falling back to rule_based.")
+        config.recognition_backend = "rule_based"
 
     try:
         SignToVisualPipeline(config).start()

@@ -10,7 +10,7 @@ if (-not (Test-Path $VenvPython)) {
     python -m venv (Join-Path $ProjectRoot ".venv")
 }
 
-& $VenvPython -c "import cv2, mediapipe as mp, pythonosc; assert hasattr(mp, 'solutions') and hasattr(mp.solutions, 'hands')" 2>$null
+& $VenvPython -c "import cv2, mediapipe as mp, pythonosc, sklearn; assert hasattr(mp, 'solutions') and hasattr(mp.solutions, 'hands')" 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Installing project dependencies..."
     & $VenvPython -m pip install --upgrade pip
