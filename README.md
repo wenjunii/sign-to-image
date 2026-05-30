@@ -47,6 +47,26 @@ camera angle, body proportions, and expressive style.
 For one performer, collect clips from that performer. For multiple users,
 collect clips from each user or train separate models per user.
 
+## Recommended Recording Plan
+
+The next practical step is to ask the person who will use the pipeline to help
+define and record the vocabulary.
+
+1. Co-design the vocabulary with the signer: decide which letters, words,
+   visual prompt tokens, and commands the system should recognize.
+2. Confirm the signs and labels. For ASL, involve the signer and, when possible,
+   a Deaf/ASL consultant so the vocabulary is appropriate.
+3. Record the actual signer performing each vocabulary item in the real setup:
+   same camera angle, lighting, distance, framing, and background.
+4. Start with 20-40 clips per sign. Add more clips for signs that are subtle,
+   fast, two-handed, or easily confused with another sign.
+5. Train the model, then test in manual commit mode before using it live with
+   StreamDiffusionTD.
+
+The current helper scripts support live webcam collection. If the signer records
+regular video files first, add a video-import script later to convert those
+videos into the same `data/clips/` landmark format before training.
+
 ## Training Data Timing
 
 Training does not need to happen live. The current workflow is:
