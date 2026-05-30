@@ -34,6 +34,40 @@ The `temporal_model` recognizer loads a trained signer-specific classifier from
 `SIGN_MODEL_PATH`. It uses short MediaPipe hand landmark clips instead of a
 single static handshape, so it can learn signs with motion.
 
+## Signer-Specific Vocabulary
+
+This project is not a general ASL or sign-language interpreter. It is designed
+to become a custom sign-to-prompt vocabulary recognizer.
+
+For ASL, an ASL signer or Deaf consultant can help choose appropriate signs and
+labels, but the most reliable model should be trained on the actual person who
+will use the pipeline. Signing varies by person, region, speed, handedness,
+camera angle, body proportions, and expressive style.
+
+For one performer, collect clips from that performer. For multiple users,
+collect clips from each user or train separate models per user.
+
+## Training Data Timing
+
+Training does not need to happen live. The current workflow is:
+
+```text
+camera collection -> saved landmark clips -> train later -> run live
+```
+
+The helper scripts currently support live webcam collection into `data/clips/`.
+Those clips are saved first, and `.\train.ps1` trains the model afterward.
+
+Recorded videos can also work in principle:
+
+```text
+record videos -> extract MediaPipe landmarks -> save clips -> train later
+```
+
+That video-import path is not included in the helper scripts yet. If you use
+recorded videos later, keep them close to the real installation setup: same
+signer, camera angle, distance, framing, lighting, and background.
+
 ## Installation
 
 ```powershell
