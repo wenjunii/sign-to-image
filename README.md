@@ -43,7 +43,7 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-You can also use the Windows launcher, which creates `.venv` and installs
+You can also use the Windows helper scripts, which create `.venv` and install
 missing dependencies automatically:
 
 ```powershell
@@ -78,19 +78,23 @@ Collect clips for each sign token you want the model to recognize. Use single
 letters like `A`, or word tokens like `WORD:river`.
 
 ```powershell
-.\.venv\Scripts\python.exe collect_gesture_clips.py --label A --count 30
-.\.venv\Scripts\python.exe collect_gesture_clips.py --label B --count 30
-.\.venv\Scripts\python.exe collect_gesture_clips.py --label WORD:river --count 30
+.\collect.ps1 -Label A -Count 30
+.\collect.ps1 -Label B -Count 30
+.\collect.ps1 -Label WORD:river -Count 30
 ```
 
 In the collection window, press `r` to record each clip and `q` to exit. Aim for
-20-40 clips per label from the actual signer and camera setup.
+20-40 clips per label from the actual signer and camera setup. Clips are saved
+under `data/clips/`, which is ignored by Git.
 
 Train the temporal classifier:
 
 ```powershell
-.\.venv\Scripts\python.exe train_temporal_model.py --data data/clips --output models/temporal_sign_model.pkl
+.\train.ps1
 ```
+
+The trained model is saved to `models/temporal_sign_model.pkl`, which is also
+ignored by Git because it is generated from local signer data.
 
 Enable it in `.env`:
 
@@ -107,6 +111,13 @@ Then run the bridge:
 
 Manual mode is best for the first pass because it lets you verify predictions
 before committing them into the prompt text.
+
+The Python entry points are still available if you want advanced options:
+
+```powershell
+.\.venv\Scripts\python.exe collect_gesture_clips.py --help
+.\.venv\Scripts\python.exe train_temporal_model.py --help
+```
 
 ## Controls
 
