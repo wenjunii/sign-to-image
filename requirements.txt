@@ -2,7 +2,7 @@
 opencv-python
 mediapipe
 numpy
-pythonosc
+python-osc
 
 # Optional: install a custom classifier runtime here later, for example
 # tensorflow
