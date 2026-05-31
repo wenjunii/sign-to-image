@@ -12,6 +12,7 @@ from gislr_tflite import (
     GISLR_POINT_DIMS,
     GISLR_POSE_OFFSET,
     GISLR_RIGHT_HAND_OFFSET,
+    create_tflite_interpreter,
     extract_gislr_frame_landmarks,
     forward_fill_short_hand_gaps,
     gislr_hand_present,
@@ -100,6 +101,18 @@ class GislrTfliteTests(unittest.TestCase):
         self.assertEqual(candidates["batched_frames"].shape, (1, 4, 543, 3))
         self.assertEqual(candidates["flat_frames"].shape, (4, 1629))
         self.assertEqual(candidates["batched_flat_frames"].shape, (1, 4, 1629))
+
+    def test_create_tflite_interpreter_passes_cpu_threads(self):
+        class FakeInterpreter:
+            kwargs = None
+
+            def __init__(self, **kwargs):
+                FakeInterpreter.kwargs = kwargs
+
+        create_tflite_interpreter(FakeInterpreter, "model.tflite", 6)
+
+        self.assertEqual(FakeInterpreter.kwargs["model_path"], "model.tflite")
+        self.assertEqual(FakeInterpreter.kwargs["num_threads"], 6)
 
     def test_forward_fill_short_hand_gaps_repairs_occlusion(self):
         sequence = np.zeros((3, GISLR_LANDMARK_COUNT, GISLR_POINT_DIMS), dtype=np.float32)

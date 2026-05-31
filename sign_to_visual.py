@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from gesture_rules import GestureResult, RuleBasedASLRecognizer
 from gislr_tflite import (
     DEFAULT_GISLR_TARGET_FRAMES,
+    DEFAULT_GISLR_THREADS,
     DEFAULT_GISLR_WINDOW_SECONDS,
     GislrTfliteRecognizer,
     extract_gislr_frame_landmarks,
@@ -148,6 +149,11 @@ def parse_args() -> argparse.Namespace:
         help="Live seconds kept for a GISLR/PopSign TFLite model. Overrides SIGN_GISLR_WINDOW_SECONDS.",
     )
     parser.add_argument(
+        "--gislr-threads",
+        type=int,
+        help="CPU threads for GISLR/PopSign TFLite inference. Overrides SIGN_GISLR_THREADS.",
+    )
+    parser.add_argument(
         "--commit-mode",
         choices=["auto", "manual"],
         help="auto commits held signs; manual commits current sign with Space.",
@@ -180,6 +186,7 @@ class PipelineConfig:
     gislr_label_map_path: str
     gislr_target_frames: int
     gislr_window_seconds: float
+    gislr_threads: int
 
 
 class SimpleHandedness:
@@ -215,6 +222,7 @@ class SignToVisualPipeline:
                 frame_extractor=self.extract_current_gislr_frame,
                 target_frames=config.gislr_target_frames,
                 window_seconds=config.gislr_window_seconds,
+                num_threads=config.gislr_threads,
                 max_missing_seconds=config.release_seconds,
             )
         self.committer = GestureCommitter(
@@ -255,7 +263,8 @@ class SignToVisualPipeline:
         if self.gislr_recognizer is not None:
             print(f"Model: {self.gislr_recognizer.info.path}")
             print(f"Label map: {self.gislr_recognizer.info.label_map_path}")
-            print(f"TFLite runtime: {self.gislr_recognizer.info.runtime}")
+            print(f"TFLite runtime: {self.gislr_recognizer.info.runtime} on CPU")
+            print(f"GISLR CPU threads: {self.gislr_recognizer.info.threads}")
         print("Keys: Space commit/space | Enter send | Backspace delete | c clear | q/Esc exit")
         print("Identity: m man | w woman | n neutral | 1 young | 2 adult | 3 elder")
         print("Visual: d Asian American | b Black and Brown | x Asian + Black and Brown")
@@ -528,6 +537,11 @@ def make_config(args: argparse.Namespace) -> PipelineConfig:
             if getattr(args, "gislr_window_seconds", None) is not None
             else env_float("SIGN_GISLR_WINDOW_SECONDS", DEFAULT_GISLR_WINDOW_SECONDS)
         ),
+        gislr_threads=(
+            args.gislr_threads
+            if getattr(args, "gislr_threads", None) is not None
+            else env_int("SIGN_GISLR_THREADS", DEFAULT_GISLR_THREADS)
+        ),
     )
 
 
@@ -558,6 +572,9 @@ def main() -> int:
     if config.gislr_window_seconds <= 0:
         print(f"Invalid SIGN_GISLR_WINDOW_SECONDS '{config.gislr_window_seconds}', using {DEFAULT_GISLR_WINDOW_SECONDS}.")
         config.gislr_window_seconds = DEFAULT_GISLR_WINDOW_SECONDS
+    if config.gislr_threads <= 0:
+        print(f"Invalid SIGN_GISLR_THREADS '{config.gislr_threads}', using {DEFAULT_GISLR_THREADS}.")
+        config.gislr_threads = DEFAULT_GISLR_THREADS
 
     try:
         SignToVisualPipeline(config).start()

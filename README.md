@@ -40,6 +40,7 @@ The `gislr_tflite` recognizer loads a pretrained TensorFlow Lite model trained
 on GISLR / PopSign-style isolated signs. It expects MediaPipe Holistic
 landmarks in the common `543 x 3` order: face, left hand, pose, right hand. This
 mode predicts one isolated vocabulary word at a time, not full ASL sentences.
+The current implementation runs MediaPipe Holistic and TFLite inference on CPU.
 
 ## Landmark Pipelines
 
@@ -321,6 +322,12 @@ time-based landmark window, resamples it to `SIGN_GISLR_TARGET_FRAMES`, runs the
 TFLite model, and converts the winning label into a `WORD:<label>` token for the
 prompt buffer.
 
+This backend is CPU-capable by design. The RTX 3080 Ti is still useful for
+StreamDiffusionTD image generation, but the current GISLR / PopSign recognition
+path does not use CUDA or a GPU delegate. If CPU load is too high, try lowering
+camera resolution, shortening the window only if the model supports it, or
+tuning `SIGN_GISLR_THREADS`.
+
 Useful settings:
 
 ```env
@@ -330,10 +337,13 @@ SIGN_MODEL_PATH=models/gislr_model.tflite
 SIGN_GISLR_LABEL_MAP=models/sign_to_prediction_index_map.json
 SIGN_GISLR_TARGET_FRAMES=64
 SIGN_GISLR_WINDOW_SECONDS=1.6
+SIGN_GISLR_THREADS=4
 ```
 
 If the model expects a different frame count or time window, adjust
-`SIGN_GISLR_TARGET_FRAMES` and `SIGN_GISLR_WINDOW_SECONDS`.
+`SIGN_GISLR_TARGET_FRAMES` and `SIGN_GISLR_WINDOW_SECONDS`. If the machine is
+dropping frames, try `SIGN_GISLR_THREADS=2`, `4`, or `8` and keep the value that
+gives the smoothest full webcam -> prompt -> StreamDiffusionTD loop.
 
 The Python entry points are still available if you want advanced options:
 
@@ -371,6 +381,7 @@ SIGN_MODEL_PATH=models/temporal_sign_model.pkl
 SIGN_GISLR_LABEL_MAP=models/gislr_label_map.json
 SIGN_GISLR_TARGET_FRAMES=64
 SIGN_GISLR_WINDOW_SECONDS=1.6
+SIGN_GISLR_THREADS=4
 SIGN_COMMIT_MODE=auto
 SIGN_HOLD_SECONDS=0.75
 AUTO_SEND_PROMPT=true

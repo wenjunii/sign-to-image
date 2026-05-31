@@ -31,6 +31,7 @@ GISLR_POSE_OFFSET = GISLR_LEFT_HAND_OFFSET + GISLR_HAND_LANDMARK_COUNT
 GISLR_RIGHT_HAND_OFFSET = GISLR_POSE_OFFSET + GISLR_POSE_LANDMARK_COUNT
 DEFAULT_GISLR_TARGET_FRAMES = 64
 DEFAULT_GISLR_WINDOW_SECONDS = 1.6
+DEFAULT_GISLR_THREADS = 4
 
 
 @dataclass
@@ -41,6 +42,7 @@ class GislrModelInfo:
     target_frames: int
     window_seconds: float
     runtime: str
+    threads: int
 
 
 def extract_gislr_frame_landmarks(results: object | None) -> np.ndarray:
@@ -180,12 +182,13 @@ def normalize_scores(scores: np.ndarray) -> np.ndarray:
 
 
 class GislrTfliteModel:
-    def __init__(self, model_path: str):
+    def __init__(self, model_path: str, num_threads: int = DEFAULT_GISLR_THREADS):
         if not os.path.exists(model_path):
             raise RuntimeError(f"GISLR/PopSign TFLite model not found at {model_path}.")
 
         interpreter_cls, runtime = load_tflite_interpreter()
-        self.interpreter = interpreter_cls(model_path=model_path)
+        self.num_threads = max(1, int(num_threads))
+        self.interpreter = create_tflite_interpreter(interpreter_cls, model_path, self.num_threads)
         self.runtime = runtime
         self.signature_runner = None
         self.signature_input = None
@@ -281,6 +284,13 @@ def load_tflite_interpreter():
     return Interpreter, "tflite_runtime"
 
 
+def create_tflite_interpreter(interpreter_cls, model_path: str, num_threads: int):
+    try:
+        return interpreter_cls(model_path=model_path, num_threads=max(1, int(num_threads)))
+    except TypeError:
+        return interpreter_cls(model_path=model_path)
+
+
 class GislrTfliteRecognizer:
     def __init__(
         self,
@@ -289,10 +299,11 @@ class GislrTfliteRecognizer:
         frame_extractor,
         target_frames: int = DEFAULT_GISLR_TARGET_FRAMES,
         window_seconds: float = DEFAULT_GISLR_WINDOW_SECONDS,
+        num_threads: int = DEFAULT_GISLR_THREADS,
         min_buffer_ratio: float = 0.6,
         max_missing_seconds: float = DEFAULT_MAX_MISSING_SECONDS,
     ):
-        self.model = GislrTfliteModel(model_path)
+        self.model = GislrTfliteModel(model_path, num_threads=num_threads)
         self.labels = load_gislr_label_map(label_map_path)
         self.frame_extractor = frame_extractor
         self.target_frames = int(target_frames)
@@ -315,6 +326,7 @@ class GislrTfliteRecognizer:
             target_frames=self.target_frames,
             window_seconds=self.window_seconds,
             runtime=self.model.runtime,
+            threads=self.model.num_threads,
         )
 
     def recognize_frame(self) -> GestureResult | None:
