@@ -2,6 +2,8 @@ param(
     [string]$Data = "data/clips",
     [string]$Output = "models/temporal_sign_model.pkl",
     [int]$Frames = 48,
+    [double]$Seconds = 1.4,
+    [double]$MaxMissingSeconds = 0.18,
     [int]$Estimators = 400,
     [double]$TestSize = 0.25,
     [int]$Seed = 42
@@ -16,6 +18,8 @@ $VenvPython = & (Join-Path $ProjectRoot "scripts\ensure_venv.ps1") -ProjectRoot 
     --data $Data `
     --output $Output `
     --frames $Frames `
+    --seconds $Seconds `
+    --max-missing-seconds $MaxMissingSeconds `
     --estimators $Estimators `
     --test-size $TestSize `
     --seed $Seed

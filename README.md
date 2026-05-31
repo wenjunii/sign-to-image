@@ -77,6 +77,9 @@ camera collection -> saved landmark clips -> train later -> run live
 
 The helper scripts currently support live webcam collection into `data/clips/`.
 Those clips are saved first, and `.\train.ps1` trains the model afterward.
+New clips include per-frame timing metadata so training can normalize gestures
+to a fixed time window instead of depending only on the number of captured
+frames.
 
 Recorded videos can also work in principle:
 
@@ -129,6 +132,33 @@ Treat saved clips and trained models as personal data because they reflect the
 signer's body movement and signing style. Do not publish or share them unless
 the signer explicitly agrees. `data/clips/` and `models/` are ignored by Git by
 default.
+
+## Timing And Occlusion Robustness
+
+Temporal recognition is sensitive to frame rate. Collection might run at one
+FPS, while live use alongside TouchDesigner / StreamDiffusionTD might run at
+another. To reduce that mismatch, training and live inference resample each
+gesture into a fixed number of frames over a fixed time window. The default is
+`48` frames over `1.4` seconds.
+
+During live inference, the temporal model keeps a time-based rolling buffer
+instead of only the last N webcam frames. That helps when system load changes
+the camera loop FPS.
+
+MediaPipe can briefly lose a hand during fast motion or hand-over-hand
+occlusion. Short missing-hand gaps are forward-filled before feature extraction.
+Longer tracking losses still reset the live temporal buffer so stale motion does
+not become a false prediction.
+
+You can tune these values when training:
+
+```powershell
+.\train.ps1 -Frames 48 -Seconds 1.4 -MaxMissingSeconds 0.18
+```
+
+If you trained a model before this timing metadata path was added, collect or
+reuse clips and run `.\train.ps1` again so the saved model includes the timing
+window and missing-frame settings.
 
 ## Installation
 

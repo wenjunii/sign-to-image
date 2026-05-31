@@ -48,6 +48,7 @@ def main() -> int:
     saved = 0
     recording_until = 0.0
     recorded_frames: list[np.ndarray] = []
+    recorded_times: list[float] = []
     started_at = 0.0
 
     print("\n" + "=" * 58)
@@ -79,9 +80,11 @@ def main() -> int:
             is_recording = now < recording_until
             if is_recording:
                 recorded_frames.append(features)
+                recorded_times.append(now - started_at)
             elif recorded_frames:
-                saved += save_clip(output_dir, args.label, recorded_frames, started_at, args)
+                saved += save_clip(output_dir, args.label, recorded_frames, recorded_times, started_at, args)
                 recorded_frames = []
+                recorded_times = []
                 if args.count and saved >= args.count:
                     break
 
@@ -95,6 +98,7 @@ def main() -> int:
                 started_at = time.time()
                 recording_until = started_at + args.seconds
                 recorded_frames = []
+                recorded_times = []
     finally:
         hands.close()
         capture.release()
@@ -104,7 +108,14 @@ def main() -> int:
     return 0
 
 
-def save_clip(output_dir: Path, label: str, frames: list[np.ndarray], started_at: float, args: argparse.Namespace) -> int:
+def save_clip(
+    output_dir: Path,
+    label: str,
+    frames: list[np.ndarray],
+    frame_times: list[float],
+    started_at: float,
+    args: argparse.Namespace,
+) -> int:
     valid_frames = sum(1 for frame in frames if np.any(frame))
     if valid_frames < args.min_valid_frames:
         print(f"Skipped clip: only {valid_frames} valid hand frame(s).")
@@ -117,6 +128,7 @@ def save_clip(output_dir: Path, label: str, frames: list[np.ndarray], started_at
         path,
         label=label,
         frames=np.asarray(frames, dtype=np.float32),
+        frame_times=np.asarray(frame_times, dtype=np.float32),
         valid_frames=np.asarray(valid_frames, dtype=np.int32),
         fps=np.asarray(len(frames) / elapsed, dtype=np.float32),
         seconds=np.asarray(args.seconds, dtype=np.float32),

@@ -13,10 +13,12 @@ from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import train_test_split
 
 from temporal_features import (
+    DEFAULT_MAX_MISSING_SECONDS,
     DEFAULT_TARGET_FRAMES,
+    DEFAULT_TARGET_SECONDS,
     FRAME_FEATURE_SIZE,
     iter_clip_files,
-    load_clip,
+    load_clip_with_timing,
     temporal_feature_vector,
 )
 
@@ -26,6 +28,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data", default="data/clips", help="Directory created by collect_gesture_clips.py.")
     parser.add_argument("--output", default="models/temporal_sign_model.pkl", help="Path for the trained model.")
     parser.add_argument("--frames", type=int, default=DEFAULT_TARGET_FRAMES, help="Resampled frame count per clip.")
+    parser.add_argument("--seconds", type=float, default=DEFAULT_TARGET_SECONDS, help="Time window represented by each clip.")
+    parser.add_argument(
+        "--max-missing-seconds",
+        type=float,
+        default=DEFAULT_MAX_MISSING_SECONDS,
+        help="Short missing-hand gaps up to this duration are forward-filled.",
+    )
     parser.add_argument("--estimators", type=int, default=400, help="Number of ExtraTrees estimators.")
     parser.add_argument("--test-size", type=float, default=0.25, help="Validation split when each class has enough clips.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
@@ -34,7 +43,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    clips = load_dataset(args.data, args.frames)
+    clips = load_dataset(args.data, args.frames, args.seconds, args.max_missing_seconds)
     if not clips:
         print(f"No clips found in {args.data}. Record clips first.")
         return 1
@@ -87,6 +96,8 @@ def main() -> int:
         "labels": sorted(counts),
         "label_counts": dict(sorted(counts.items())),
         "target_frames": args.frames,
+        "target_seconds": args.seconds,
+        "max_missing_seconds": args.max_missing_seconds,
         "frame_feature_size": FRAME_FEATURE_SIZE,
         "feature_kind": "mediapipe_two_hand_temporal_v1",
         "metrics": {
@@ -109,12 +120,28 @@ def main() -> int:
     return 0
 
 
-def load_dataset(data_dir: str, target_frames: int) -> list[tuple[str, np.ndarray]]:
+def load_dataset(
+    data_dir: str,
+    target_frames: int,
+    target_seconds: float,
+    max_missing_seconds: float,
+) -> list[tuple[str, np.ndarray]]:
     clips = []
     for path in iter_clip_files(data_dir):
         try:
-            label, frames = load_clip(path)
-            clips.append((label, temporal_feature_vector(frames, target_frames)))
+            label, frames, timestamps, _ = load_clip_with_timing(path)
+            clips.append(
+                (
+                    label,
+                    temporal_feature_vector(
+                        frames,
+                        target_frames=target_frames,
+                        timestamps=timestamps,
+                        window_seconds=target_seconds,
+                        max_missing_seconds=max_missing_seconds,
+                    ),
+                )
+            )
         except Exception as exc:
             print(f"Skipping {path}: {exc}")
     return clips
