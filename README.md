@@ -16,6 +16,7 @@ It references the structure of `voice-to-visual-sdtd`, but swaps Whisper/audio c
 - Rule-based ASL fingerspelling prototype for static handshapes: `A B C D E F I L O U V W Y`.
 - Trained temporal model path for signer-specific gesture clips.
 - Optional MediaPipe Holistic pipeline with hands, pose, and face landmarks.
+- Experimental GISLR / PopSign-style TensorFlow Lite backend for pretrained isolated-sign models.
 - Two-hand commands:
   - two open palms: send prompt
   - open palm plus closed fist: insert space
@@ -35,6 +36,11 @@ The `temporal_model` recognizer loads a trained signer-specific classifier from
 `SIGN_MODEL_PATH`. It uses short MediaPipe landmark clips instead of a single
 static handshape, so it can learn signs with motion.
 
+The `gislr_tflite` recognizer loads a pretrained TensorFlow Lite model trained
+on GISLR / PopSign-style isolated signs. It expects MediaPipe Holistic
+landmarks in the common `543 x 3` order: face, left hand, pose, right hand. This
+mode predicts one isolated vocabulary word at a time, not full ASL sentences.
+
 ## Landmark Pipelines
 
 The default `hands` pipeline uses MediaPipe Hands and keeps the existing
@@ -48,6 +54,9 @@ heavier and needs its own training clips and model.
 
 Hands and Holistic models are not interchangeable. The collection, training,
 and live run steps must use the same landmark pipeline.
+
+The GISLR / PopSign TFLite backend always uses the `holistic` pipeline because
+those models usually expect face, hand, and pose landmarks in one sequence.
 
 ## Signer-Specific Vocabulary
 
@@ -184,6 +193,13 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
+For the optional GISLR / PopSign TFLite backend, install one TensorFlow Lite
+runtime in the same venv:
+
+```powershell
+pip install tensorflow
+```
+
 You can also use the Windows helper scripts, which create `.venv` and install
 missing dependencies automatically:
 
@@ -217,6 +233,12 @@ To run a trained Holistic model:
 
 ```powershell
 .\run.ps1 --recognition-backend temporal_model --landmark-pipeline holistic --model-path models/holistic_temporal_sign_model.pkl --commit-mode manual
+```
+
+To run a GISLR / PopSign-style TFLite model:
+
+```powershell
+.\run.ps1 --recognition-backend gislr_tflite --model-path models/gislr_model.tflite --label-map models/sign_to_prediction_index_map.json --commit-mode manual
 ```
 
 ## Trained Temporal Model Workflow
@@ -272,6 +294,47 @@ Then run the bridge:
 Manual mode is best for the first pass because it lets you verify predictions
 before committing them into the prompt text.
 
+## GISLR / PopSign TFLite Workflow
+
+This is the pretrained-model path. It is useful when you have a GISLR /
+PopSign-compatible `.tflite` model and a label map, such as Kaggle's
+`sign_to_prediction_index_map.json`.
+
+Put local model files under `models/`:
+
+```text
+models/gislr_model.tflite
+models/sign_to_prediction_index_map.json
+```
+
+Those files are ignored by Git by default. Do not commit pretrained weights or
+signer data unless the license and consent terms allow it.
+
+Then run:
+
+```powershell
+.\run.ps1 --recognition-backend gislr_tflite --model-path models/gislr_model.tflite --label-map models/sign_to_prediction_index_map.json --commit-mode manual
+```
+
+The backend automatically switches to MediaPipe Holistic, keeps a short
+time-based landmark window, resamples it to `SIGN_GISLR_TARGET_FRAMES`, runs the
+TFLite model, and converts the winning label into a `WORD:<label>` token for the
+prompt buffer.
+
+Useful settings:
+
+```env
+SIGN_RECOGNITION_BACKEND=gislr_tflite
+SIGN_LANDMARK_PIPELINE=holistic
+SIGN_MODEL_PATH=models/gislr_model.tflite
+SIGN_GISLR_LABEL_MAP=models/sign_to_prediction_index_map.json
+SIGN_GISLR_TARGET_FRAMES=64
+SIGN_GISLR_WINDOW_SECONDS=1.6
+```
+
+If the model expects a different frame count or time window, adjust
+`SIGN_GISLR_TARGET_FRAMES` and `SIGN_GISLR_WINDOW_SECONDS`.
+
 The Python entry points are still available if you want advanced options:
 
 ```powershell
@@ -305,6 +368,9 @@ CAMERA_INDEX=0
 SIGN_RECOGNITION_BACKEND=rule_based
 SIGN_LANDMARK_PIPELINE=hands
 SIGN_MODEL_PATH=models/temporal_sign_model.pkl
+SIGN_GISLR_LABEL_MAP=models/gislr_label_map.json
+SIGN_GISLR_TARGET_FRAMES=64
+SIGN_GISLR_WINDOW_SECONDS=1.6
 SIGN_COMMIT_MODE=auto
 SIGN_HOLD_SECONDS=0.75
 AUTO_SEND_PROMPT=true
@@ -314,12 +380,15 @@ Set `AUTO_SEND_PROMPT=false` if you only want prompts sent when you press Enter 
 
 ## How To Make It Better
 
-For an installation or performance piece, the next upgrade after the local
-temporal classifier is a deeper temporal recognizer:
+For an installation or performance piece, the next upgrades after these starter
+backends are:
 
-1. Collect gesture clips from the actual signer and camera setup.
-2. Train a temporal model on MediaPipe hand, pose, and face landmarks.
-3. Export it to ONNX or TensorFlow Lite.
-4. Replace the scikit-learn classifier with a model-backed recognizer that returns the same `GestureResult` shape.
+1. Test a GISLR / PopSign `.tflite` model against the actual signer and camera
+   setup.
+2. Compare that pretrained model against the signer-specific `temporal_model`
+   workflow.
+3. Fine-tune or retrain a deeper temporal model when the pretrained vocabulary
+   or signer coverage is not reliable enough.
 
-That gets you from simple fingerspelling into phrase-level sign recognition without changing the StreamDiffusion side.
+That gets you from simple fingerspelling into larger isolated-sign vocabularies
+without changing the StreamDiffusion side.

@@ -7,6 +7,12 @@ import time
 from dataclasses import dataclass
 
 from gesture_rules import GestureResult, RuleBasedASLRecognizer
+from gislr_tflite import (
+    DEFAULT_GISLR_TARGET_FRAMES,
+    DEFAULT_GISLR_WINDOW_SECONDS,
+    GislrTfliteRecognizer,
+    extract_gislr_frame_landmarks,
+)
 from prompting import (
     AGE_MODES,
     GENDER_MODES,
@@ -121,7 +127,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--osc-port", type=int, help="OSC target port. Overrides OSC_PORT from .env.")
     parser.add_argument(
         "--recognition-backend",
-        choices=["rule_based", "temporal_model"],
+        choices=["rule_based", "temporal_model", "gislr_tflite"],
         help="Recognition backend. Overrides SIGN_RECOGNITION_BACKEND from .env.",
     )
     parser.add_argument(
@@ -129,7 +135,18 @@ def parse_args() -> argparse.Namespace:
         choices=["hands", "holistic"],
         help="MediaPipe landmark pipeline. Overrides SIGN_LANDMARK_PIPELINE from .env.",
     )
-    parser.add_argument("--model-path", help="Temporal model path. Overrides SIGN_MODEL_PATH from .env.")
+    parser.add_argument("--model-path", help="Model path. Overrides SIGN_MODEL_PATH from .env.")
+    parser.add_argument("--label-map", help="GISLR/PopSign label map JSON. Overrides SIGN_GISLR_LABEL_MAP from .env.")
+    parser.add_argument(
+        "--gislr-target-frames",
+        type=int,
+        help="Number of frames sent to a GISLR/PopSign TFLite model. Overrides SIGN_GISLR_TARGET_FRAMES.",
+    )
+    parser.add_argument(
+        "--gislr-window-seconds",
+        type=float,
+        help="Live seconds kept for a GISLR/PopSign TFLite model. Overrides SIGN_GISLR_WINDOW_SECONDS.",
+    )
     parser.add_argument(
         "--commit-mode",
         choices=["auto", "manual"],
@@ -160,6 +177,9 @@ class PipelineConfig:
     recognition_backend: str
     temporal_model_path: str
     landmark_pipeline: str
+    gislr_label_map_path: str
+    gislr_target_frames: int
+    gislr_window_seconds: float
 
 
 class SimpleHandedness:
@@ -182,10 +202,20 @@ class SignToVisualPipeline:
         self.current_hand_landmarks = []
         self.current_handedness = []
         self.temporal_recognizer = None
+        self.gislr_recognizer = None
         if config.recognition_backend == "temporal_model":
             self.temporal_recognizer = TemporalModelRecognizer(
                 config.temporal_model_path,
                 frame_extractor=self.extract_current_frame_features,
+            )
+        elif config.recognition_backend == "gislr_tflite":
+            self.gislr_recognizer = GislrTfliteRecognizer(
+                config.temporal_model_path,
+                label_map_path=config.gislr_label_map_path,
+                frame_extractor=self.extract_current_gislr_frame,
+                target_frames=config.gislr_target_frames,
+                window_seconds=config.gislr_window_seconds,
+                max_missing_seconds=config.release_seconds,
             )
         self.committer = GestureCommitter(
             hold_seconds=config.hold_seconds,
@@ -222,6 +252,10 @@ class SignToVisualPipeline:
         print(f"Landmarks: {self.config.landmark_pipeline}")
         if self.temporal_recognizer is not None:
             print(f"Model: {self.temporal_recognizer.info.path}")
+        if self.gislr_recognizer is not None:
+            print(f"Model: {self.gislr_recognizer.info.path}")
+            print(f"Label map: {self.gislr_recognizer.info.label_map_path}")
+            print(f"TFLite runtime: {self.gislr_recognizer.info.runtime}")
         print("Keys: Space commit/space | Enter send | Backspace delete | c clear | q/Esc exit")
         print("Identity: m man | w woman | n neutral | 1 young | 2 adult | 3 elder")
         print("Visual: d Asian American | b Black and Brown | x Asian + Black and Brown")
@@ -306,6 +340,14 @@ class SignToVisualPipeline:
             self.last_detected = active
             return active
 
+        if self.gislr_recognizer is not None:
+            active = self.gislr_recognizer.recognize_frame()
+            if active is None or active.confidence < self.config.min_confidence:
+                self.last_detected = None
+                return None
+            self.last_detected = active
+            return active
+
         confident = [item for item in detections if item.confidence >= self.config.min_confidence]
         if not confident:
             self.last_detected = None
@@ -334,6 +376,9 @@ class SignToVisualPipeline:
                 return extract_holistic_frame_features(None)
             return extract_holistic_frame_features(self.current_results)
         return extract_frame_features(self.current_hand_landmarks, self.current_handedness)
+
+    def extract_current_gislr_frame(self):
+        return extract_gislr_frame_landmarks(self.current_results)
 
     def handle_auto_commit(self, active: GestureResult | None) -> None:
         if self.config.commit_mode != "auto":
@@ -471,6 +516,18 @@ def make_config(args: argparse.Namespace) -> PipelineConfig:
         landmark_pipeline=(
             getattr(args, "landmark_pipeline", None) or os.environ.get("SIGN_LANDMARK_PIPELINE", "hands")
         ).strip().lower(),
+        gislr_label_map_path=getattr(args, "label_map", None)
+        or os.environ.get("SIGN_GISLR_LABEL_MAP", "models/gislr_label_map.json"),
+        gislr_target_frames=(
+            args.gislr_target_frames
+            if getattr(args, "gislr_target_frames", None) is not None
+            else env_int("SIGN_GISLR_TARGET_FRAMES", DEFAULT_GISLR_TARGET_FRAMES)
+        ),
+        gislr_window_seconds=(
+            args.gislr_window_seconds
+            if getattr(args, "gislr_window_seconds", None) is not None
+            else env_float("SIGN_GISLR_WINDOW_SECONDS", DEFAULT_GISLR_WINDOW_SECONDS)
+        ),
     )
 
 
@@ -486,12 +543,21 @@ def main() -> int:
         print(f"Unknown SIGN_COMMIT_MODE '{config.commit_mode}', falling back to auto.")
         config.commit_mode = "auto"
 
-    if config.recognition_backend not in {"rule_based", "temporal_model"}:
+    if config.recognition_backend not in {"rule_based", "temporal_model", "gislr_tflite"}:
         print(f"Unknown SIGN_RECOGNITION_BACKEND '{config.recognition_backend}', falling back to rule_based.")
         config.recognition_backend = "rule_based"
     if config.landmark_pipeline not in {"hands", "holistic"}:
         print(f"Unknown SIGN_LANDMARK_PIPELINE '{config.landmark_pipeline}', falling back to hands.")
         config.landmark_pipeline = "hands"
+    if config.recognition_backend == "gislr_tflite" and config.landmark_pipeline != "holistic":
+        print("GISLR/PopSign TFLite backend requires MediaPipe Holistic; switching SIGN_LANDMARK_PIPELINE to holistic.")
+        config.landmark_pipeline = "holistic"
+    if config.gislr_target_frames <= 0:
+        print(f"Invalid SIGN_GISLR_TARGET_FRAMES '{config.gislr_target_frames}', using {DEFAULT_GISLR_TARGET_FRAMES}.")
+        config.gislr_target_frames = DEFAULT_GISLR_TARGET_FRAMES
+    if config.gislr_window_seconds <= 0:
+        print(f"Invalid SIGN_GISLR_WINDOW_SECONDS '{config.gislr_window_seconds}', using {DEFAULT_GISLR_WINDOW_SECONDS}.")
+        config.gislr_window_seconds = DEFAULT_GISLR_WINDOW_SECONDS
 
     try:
         SignToVisualPipeline(config).start()

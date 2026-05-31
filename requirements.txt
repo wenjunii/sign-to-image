@@ -5,6 +5,7 @@ opencv-contrib-python
 python-osc
 scikit-learn
 
-# Optional: install a custom classifier runtime here later, for example
+# Optional GISLR/PopSign TFLite backend: install one runtime only when needed.
 # tensorflow
+# tflite-runtime
 # onnxruntime
