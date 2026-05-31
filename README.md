@@ -58,6 +58,14 @@ and live run steps must use the same landmark pipeline.
 
 The GISLR / PopSign TFLite backend always uses the `holistic` pipeline because
 those models usually expect face, hand, and pose landmarks in one sequence.
+GISLR / PopSign is not a MediaPipe landmark pipeline itself. In this project it
+is a recognition backend that reads MediaPipe Holistic landmarks, and it is not
+used with the `hands` pipeline.
+
+| Landmark pipeline | Recognition backends |
+| --- | --- |
+| `hands` | `rule_based`, `temporal_model` |
+| `holistic` | `temporal_model`, `gislr_tflite` |
 
 ## Signer-Specific Vocabulary
 
