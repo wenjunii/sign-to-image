@@ -15,7 +15,7 @@ if (-not (Test-Path $VenvPython)) {
     }
 }
 
-& $VenvPython -c "import cv2, mediapipe as mp, pythonosc, sklearn; assert hasattr(mp, 'solutions') and hasattr(mp.solutions, 'hands')" 2>$null
+& $VenvPython -c "import cv2, mediapipe as mp, pythonosc, sklearn; assert hasattr(mp, 'solutions') and hasattr(mp.solutions, 'hands') and hasattr(mp.solutions, 'holistic')" 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Installing project dependencies..."
     & $VenvPython -m pip install --upgrade pip
@@ -27,7 +27,7 @@ if ($LASTEXITCODE -ne 0) {
         throw "Could not install project dependencies."
     }
 
-    & $VenvPython -c "import cv2, mediapipe as mp, pythonosc, sklearn; assert hasattr(mp, 'solutions') and hasattr(mp.solutions, 'hands')"
+    & $VenvPython -c "import cv2, mediapipe as mp, pythonosc, sklearn; assert hasattr(mp, 'solutions') and hasattr(mp.solutions, 'hands') and hasattr(mp.solutions, 'holistic')"
     if ($LASTEXITCODE -ne 0) {
         throw "Project dependencies are installed, but runtime imports still fail."
     }

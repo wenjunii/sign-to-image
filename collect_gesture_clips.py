@@ -10,7 +10,13 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
-from temporal_features import extract_frame_features, safe_label_dir
+from temporal_features import (
+    FRAME_FEATURE_SIZE,
+    extract_frame_features,
+    extract_holistic_frame_features,
+    get_feature_spec,
+    safe_label_dir,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -21,12 +27,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seconds", type=float, default=1.4, help="Seconds to record per clip.")
     parser.add_argument("--count", type=int, default=0, help="Stop after this many saved clips. 0 means unlimited.")
     parser.add_argument("--min-valid-frames", type=int, default=6, help="Minimum frames with at least one detected hand.")
+    parser.add_argument("--landmark-pipeline", choices=["hands", "holistic"], default="hands", help="MediaPipe landmark pipeline.")
     parser.add_argument("--no-mirror", action="store_true", help="Do not mirror the camera image.")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    feature_spec = get_feature_spec(args.landmark_pipeline)
     output_dir = Path(args.output) / safe_label_dir(args.label)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -36,14 +44,9 @@ def main() -> int:
         return 1
 
     mp_hands = mp.solutions.hands
+    mp_holistic = mp.solutions.holistic
     mp_draw = mp.solutions.drawing_utils
-    hands = mp_hands.Hands(
-        static_image_mode=False,
-        max_num_hands=2,
-        model_complexity=1,
-        min_detection_confidence=0.65,
-        min_tracking_confidence=0.6,
-    )
+    tracker = create_tracker(args.landmark_pipeline, mp_hands, mp_holistic)
 
     saved = 0
     recording_until = 0.0
@@ -53,6 +56,7 @@ def main() -> int:
 
     print("\n" + "=" * 58)
     print(f"COLLECTING LABEL: {args.label}")
+    print(f"Landmarks: {args.landmark_pipeline}")
     print("Press r to record one clip | q/Esc to quit")
     print(f"Saving to: {output_dir}")
     print("=" * 58 + "\n")
@@ -68,10 +72,12 @@ def main() -> int:
                 frame = cv2.flip(frame, 1)
 
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = hands.process(rgb)
-            hand_landmarks = results.multi_hand_landmarks or []
-            handedness = results.multi_handedness or []
-            features = extract_frame_features(hand_landmarks, handedness)
+            results = tracker.process(rgb)
+            hand_landmarks, handedness = extract_hand_results(results, args.landmark_pipeline)
+            if args.landmark_pipeline == "holistic":
+                features = extract_holistic_frame_features(results)
+            else:
+                features = extract_frame_features(hand_landmarks, handedness)
 
             for landmarks in hand_landmarks:
                 mp_draw.draw_landmarks(frame, landmarks, mp_hands.HAND_CONNECTIONS)
@@ -82,7 +88,7 @@ def main() -> int:
                 recorded_frames.append(features)
                 recorded_times.append(now - started_at)
             elif recorded_frames:
-                saved += save_clip(output_dir, args.label, recorded_frames, recorded_times, started_at, args)
+                saved += save_clip(output_dir, args.label, recorded_frames, recorded_times, started_at, args, feature_spec)
                 recorded_frames = []
                 recorded_times = []
                 if args.count and saved >= args.count:
@@ -100,12 +106,55 @@ def main() -> int:
                 recorded_frames = []
                 recorded_times = []
     finally:
-        hands.close()
+        tracker.close()
         capture.release()
         cv2.destroyAllWindows()
 
     print(f"Saved {saved} clip(s) for label {args.label}.")
     return 0
+
+
+def create_tracker(landmark_pipeline: str, mp_hands, mp_holistic):
+    if landmark_pipeline == "holistic":
+        return mp_holistic.Holistic(
+            static_image_mode=False,
+            model_complexity=1,
+            smooth_landmarks=True,
+            refine_face_landmarks=False,
+            min_detection_confidence=0.65,
+            min_tracking_confidence=0.6,
+        )
+    return mp_hands.Hands(
+        static_image_mode=False,
+        max_num_hands=2,
+        model_complexity=1,
+        min_detection_confidence=0.65,
+        min_tracking_confidence=0.6,
+    )
+
+
+class SimpleHandedness:
+    def __init__(self, label: str):
+        self.classification = [SimpleClassification(label)]
+
+
+class SimpleClassification:
+    def __init__(self, label: str):
+        self.label = label
+
+
+def extract_hand_results(results, landmark_pipeline: str) -> tuple[list[object], list[object]]:
+    if landmark_pipeline == "holistic":
+        hand_landmarks = []
+        handedness = []
+        if getattr(results, "left_hand_landmarks", None) is not None:
+            hand_landmarks.append(results.left_hand_landmarks)
+            handedness.append(SimpleHandedness("Left"))
+        if getattr(results, "right_hand_landmarks", None) is not None:
+            hand_landmarks.append(results.right_hand_landmarks)
+            handedness.append(SimpleHandedness("Right"))
+        return hand_landmarks, handedness
+    return results.multi_hand_landmarks or [], results.multi_handedness or []
 
 
 def save_clip(
@@ -115,8 +164,9 @@ def save_clip(
     frame_times: list[float],
     started_at: float,
     args: argparse.Namespace,
+    feature_spec,
 ) -> int:
-    valid_frames = sum(1 for frame in frames if np.any(frame))
+    valid_frames = sum(1 for frame in frames if hand_features_present(frame))
     if valid_frames < args.min_valid_frames:
         print(f"Skipped clip: only {valid_frames} valid hand frame(s).")
         return 0
@@ -129,12 +179,19 @@ def save_clip(
         label=label,
         frames=np.asarray(frames, dtype=np.float32),
         frame_times=np.asarray(frame_times, dtype=np.float32),
+        landmark_pipeline=args.landmark_pipeline,
+        feature_kind=feature_spec.kind,
+        frame_feature_size=np.asarray(feature_spec.frame_size, dtype=np.int32),
         valid_frames=np.asarray(valid_frames, dtype=np.int32),
         fps=np.asarray(len(frames) / elapsed, dtype=np.float32),
         seconds=np.asarray(args.seconds, dtype=np.float32),
     )
     print(f"Saved {path} ({len(frames)} frames, {valid_frames} valid).")
     return 1
+
+
+def hand_features_present(frame: np.ndarray) -> bool:
+    return bool(np.any(frame[:FRAME_FEATURE_SIZE]))
 
 
 def draw_overlay(frame, label: str, saved: int, is_recording: bool, seconds_left: float, hands_seen: int) -> None:

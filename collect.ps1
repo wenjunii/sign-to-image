@@ -5,6 +5,8 @@ param(
     [double]$Seconds = 1.4,
     [int]$Camera = 0,
     [string]$Output = "data/clips",
+    [ValidateSet("hands", "holistic")]
+    [string]$Pipeline = "hands",
     [switch]$NoMirror
 )
 
@@ -18,7 +20,8 @@ $ArgsList = @(
     "--count", $Count,
     "--seconds", $Seconds,
     "--camera", $Camera,
-    "--output", $Output
+    "--output", $Output,
+    "--landmark-pipeline", $Pipeline
 )
 
 if ($NoMirror) {

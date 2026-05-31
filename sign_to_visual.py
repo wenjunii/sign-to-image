@@ -16,6 +16,7 @@ from prompting import (
     PromptState,
     SignedTextBuffer,
 )
+from temporal_features import extract_frame_features, extract_holistic_frame_features
 from temporal_model import TemporalModelRecognizer
 
 cv2 = None
@@ -40,8 +41,12 @@ def load_runtime_dependencies() -> None:
     except ImportError:
         missing.append("mediapipe")
     else:
-        if not hasattr(mp_module, "solutions") or not hasattr(mp_module.solutions, "hands"):
-            missing.append("mediapipe with legacy solutions.hands support")
+        if (
+            not hasattr(mp_module, "solutions")
+            or not hasattr(mp_module.solutions, "hands")
+            or not hasattr(mp_module.solutions, "holistic")
+        ):
+            missing.append("mediapipe with legacy solutions hands/holistic support")
         else:
             mp = mp_module
 
@@ -115,6 +120,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--osc-ip", help="OSC target IP. Overrides OSC_IP from .env.")
     parser.add_argument("--osc-port", type=int, help="OSC target port. Overrides OSC_PORT from .env.")
     parser.add_argument(
+        "--recognition-backend",
+        choices=["rule_based", "temporal_model"],
+        help="Recognition backend. Overrides SIGN_RECOGNITION_BACKEND from .env.",
+    )
+    parser.add_argument(
+        "--landmark-pipeline",
+        choices=["hands", "holistic"],
+        help="MediaPipe landmark pipeline. Overrides SIGN_LANDMARK_PIPELINE from .env.",
+    )
+    parser.add_argument("--model-path", help="Temporal model path. Overrides SIGN_MODEL_PATH from .env.")
+    parser.add_argument(
         "--commit-mode",
         choices=["auto", "manual"],
         help="auto commits held signs; manual commits current sign with Space.",
@@ -143,6 +159,17 @@ class PipelineConfig:
     max_text_chars: int
     recognition_backend: str
     temporal_model_path: str
+    landmark_pipeline: str
+
+
+class SimpleHandedness:
+    def __init__(self, label: str):
+        self.classification = [SimpleClassification(label)]
+
+
+class SimpleClassification:
+    def __init__(self, label: str):
+        self.label = label
 
 
 class SignToVisualPipeline:
@@ -151,9 +178,15 @@ class SignToVisualPipeline:
 
         self.config = config
         self.rule_recognizer = RuleBasedASLRecognizer()
+        self.current_results = None
+        self.current_hand_landmarks = []
+        self.current_handedness = []
         self.temporal_recognizer = None
         if config.recognition_backend == "temporal_model":
-            self.temporal_recognizer = TemporalModelRecognizer(config.temporal_model_path)
+            self.temporal_recognizer = TemporalModelRecognizer(
+                config.temporal_model_path,
+                frame_extractor=self.extract_current_frame_features,
+            )
         self.committer = GestureCommitter(
             hold_seconds=config.hold_seconds,
             release_seconds=config.release_seconds,
@@ -172,14 +205,9 @@ class SignToVisualPipeline:
         self.is_running = True
 
         self.mp_hands = mp.solutions.hands
+        self.mp_holistic = mp.solutions.holistic
         self.mp_draw = mp.solutions.drawing_utils
-        self.hands = self.mp_hands.Hands(
-            static_image_mode=False,
-            max_num_hands=2,
-            model_complexity=1,
-            min_detection_confidence=0.65,
-            min_tracking_confidence=0.6,
-        )
+        self.tracker = self.create_tracker()
 
     def start(self) -> None:
         capture = cv2.VideoCapture(self.config.camera_index)
@@ -191,6 +219,7 @@ class SignToVisualPipeline:
         print(f"OSC target: {self.config.osc_ip}:{self.config.osc_port}")
         print(f"Commit mode: {self.config.commit_mode}")
         print(f"Recognizer: {self.config.recognition_backend}")
+        print(f"Landmarks: {self.config.landmark_pipeline}")
         if self.temporal_recognizer is not None:
             print(f"Model: {self.temporal_recognizer.info.path}")
         print("Keys: Space commit/space | Enter send | Backspace delete | c clear | q/Esc exit")
@@ -220,18 +249,38 @@ class SignToVisualPipeline:
 
                 self.handle_key(key, active)
         finally:
-            self.hands.close()
+            self.tracker.close()
             capture.release()
             if self.config.show_preview:
                 cv2.destroyAllWindows()
 
+    def create_tracker(self):
+        if self.config.landmark_pipeline == "holistic":
+            return self.mp_holistic.Holistic(
+                static_image_mode=False,
+                model_complexity=1,
+                smooth_landmarks=True,
+                refine_face_landmarks=False,
+                min_detection_confidence=0.65,
+                min_tracking_confidence=0.6,
+            )
+        return self.mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=2,
+            model_complexity=1,
+            min_detection_confidence=0.65,
+            min_tracking_confidence=0.6,
+        )
+
     def process_frame(self, frame) -> GestureResult | None:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.hands.process(rgb)
+        results = self.tracker.process(rgb)
         detections: list[GestureResult] = []
 
-        hand_landmarks = results.multi_hand_landmarks or []
-        handedness = results.multi_handedness or []
+        hand_landmarks, handedness = self.extract_hand_results(results)
+        self.current_results = results
+        self.current_hand_landmarks = hand_landmarks
+        self.current_handedness = handedness
         for index, landmarks in enumerate(hand_landmarks):
             hand_label = "Right"
             if index < len(handedness):
@@ -250,7 +299,7 @@ class SignToVisualPipeline:
             return command
 
         if self.temporal_recognizer is not None:
-            active = self.temporal_recognizer.recognize_frame(hand_landmarks, handedness)
+            active = self.temporal_recognizer.recognize_frame()
             if active is None or active.confidence < self.config.min_confidence:
                 self.last_detected = None
                 return None
@@ -265,6 +314,26 @@ class SignToVisualPipeline:
         active = max(confident, key=lambda item: item.confidence)
         self.last_detected = active
         return active
+
+    def extract_hand_results(self, results) -> tuple[list[object], list[object]]:
+        if self.config.landmark_pipeline == "holistic":
+            hand_landmarks = []
+            handedness = []
+            if getattr(results, "left_hand_landmarks", None) is not None:
+                hand_landmarks.append(results.left_hand_landmarks)
+                handedness.append(SimpleHandedness("Left"))
+            if getattr(results, "right_hand_landmarks", None) is not None:
+                hand_landmarks.append(results.right_hand_landmarks)
+                handedness.append(SimpleHandedness("Right"))
+            return hand_landmarks, handedness
+        return results.multi_hand_landmarks or [], results.multi_handedness or []
+
+    def extract_current_frame_features(self):
+        if self.config.landmark_pipeline == "holistic":
+            if self.current_results is None:
+                return extract_holistic_frame_features(None)
+            return extract_holistic_frame_features(self.current_results)
+        return extract_frame_features(self.current_hand_landmarks, self.current_handedness)
 
     def handle_auto_commit(self, active: GestureResult | None) -> None:
         if self.config.commit_mode != "auto":
@@ -363,7 +432,7 @@ class SignToVisualPipeline:
                 f"Mode: {self.config.commit_mode} | "
                 f"{self.prompt_state.gender}/{self.prompt_state.age}/{self.prompt_state.visual_mode}"
             ),
-            f"Backend: {self.config.recognition_backend}",
+            f"Backend: {self.config.recognition_backend} | Landmarks: {self.config.landmark_pipeline}",
         ]
 
         x = 14
@@ -395,8 +464,13 @@ def make_config(args: argparse.Namespace) -> PipelineConfig:
         release_seconds=env_float("SIGN_RELEASE_SECONDS", 0.25),
         repeat_cooldown_seconds=env_float("SIGN_REPEAT_COOLDOWN_SECONDS", 1.8),
         max_text_chars=env_int("MAX_TEXT_CHARS", 160),
-        recognition_backend=os.environ.get("SIGN_RECOGNITION_BACKEND", "rule_based").strip().lower(),
-        temporal_model_path=os.environ.get("SIGN_MODEL_PATH", "models/temporal_sign_model.pkl"),
+        recognition_backend=(
+            getattr(args, "recognition_backend", None) or os.environ.get("SIGN_RECOGNITION_BACKEND", "rule_based")
+        ).strip().lower(),
+        temporal_model_path=getattr(args, "model_path", None) or os.environ.get("SIGN_MODEL_PATH", "models/temporal_sign_model.pkl"),
+        landmark_pipeline=(
+            getattr(args, "landmark_pipeline", None) or os.environ.get("SIGN_LANDMARK_PIPELINE", "hands")
+        ).strip().lower(),
     )
 
 
@@ -415,6 +489,9 @@ def main() -> int:
     if config.recognition_backend not in {"rule_based", "temporal_model"}:
         print(f"Unknown SIGN_RECOGNITION_BACKEND '{config.recognition_backend}', falling back to rule_based.")
         config.recognition_backend = "rule_based"
+    if config.landmark_pipeline not in {"hands", "holistic"}:
+        print(f"Unknown SIGN_LANDMARK_PIPELINE '{config.landmark_pipeline}', falling back to hands.")
+        config.landmark_pipeline = "hands"
 
     try:
         SignToVisualPipeline(config).start()

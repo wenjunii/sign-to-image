@@ -16,7 +16,7 @@ from temporal_features import (
     DEFAULT_MAX_MISSING_SECONDS,
     DEFAULT_TARGET_FRAMES,
     DEFAULT_TARGET_SECONDS,
-    FRAME_FEATURE_SIZE,
+    get_feature_spec,
     iter_clip_files,
     load_clip_with_timing,
     temporal_feature_vector,
@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a temporal sign classifier from collected landmark clips.")
     parser.add_argument("--data", default="data/clips", help="Directory created by collect_gesture_clips.py.")
     parser.add_argument("--output", default="models/temporal_sign_model.pkl", help="Path for the trained model.")
+    parser.add_argument("--landmark-pipeline", choices=["hands", "holistic"], default="hands", help="Feature pipeline used by the clips.")
     parser.add_argument("--frames", type=int, default=DEFAULT_TARGET_FRAMES, help="Resampled frame count per clip.")
     parser.add_argument("--seconds", type=float, default=DEFAULT_TARGET_SECONDS, help="Time window represented by each clip.")
     parser.add_argument(
@@ -43,7 +44,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    clips = load_dataset(args.data, args.frames, args.seconds, args.max_missing_seconds)
+    feature_spec = get_feature_spec(args.landmark_pipeline)
+    clips = load_dataset(args.data, args.frames, args.seconds, args.max_missing_seconds, feature_spec)
     if not clips:
         print(f"No clips found in {args.data}. Record clips first.")
         return 1
@@ -98,8 +100,9 @@ def main() -> int:
         "target_frames": args.frames,
         "target_seconds": args.seconds,
         "max_missing_seconds": args.max_missing_seconds,
-        "frame_feature_size": FRAME_FEATURE_SIZE,
-        "feature_kind": "mediapipe_two_hand_temporal_v1",
+        "landmark_pipeline": feature_spec.name,
+        "frame_feature_size": feature_spec.frame_size,
+        "feature_kind": feature_spec.kind,
         "metrics": {
             "eval_name": eval_name,
             "accuracy": accuracy,
@@ -125,11 +128,18 @@ def load_dataset(
     target_frames: int,
     target_seconds: float,
     max_missing_seconds: float,
+    feature_spec,
 ) -> list[tuple[str, np.ndarray]]:
     clips = []
     for path in iter_clip_files(data_dir):
         try:
             label, frames, timestamps, _ = load_clip_with_timing(path)
+            if frames.ndim != 2 or frames.shape[1] != feature_spec.frame_size:
+                print(
+                    f"Skipping {path}: frame size {frames.shape[1] if frames.ndim == 2 else frames.shape} "
+                    f"does not match {feature_spec.name} size {feature_spec.frame_size}."
+                )
+                continue
             clips.append(
                 (
                     label,
@@ -139,6 +149,8 @@ def load_dataset(
                         timestamps=timestamps,
                         window_seconds=target_seconds,
                         max_missing_seconds=max_missing_seconds,
+                        frame_feature_size=feature_spec.frame_size,
+                        feature_kind=feature_spec.kind,
                     ),
                 )
             )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -11,10 +12,32 @@ HAND_LANDMARK_COUNT = 21
 POINT_DIMS = 3
 HAND_FEATURE_SIZE = 1 + HAND_LANDMARK_COUNT * POINT_DIMS
 FRAME_FEATURE_SIZE = HAND_FEATURE_SIZE * 2
+POSE_LANDMARK_COUNT = 33
+FACE_LANDMARK_COUNT = 468
+POSE_FEATURE_SIZE = 1 + POSE_LANDMARK_COUNT * POINT_DIMS
+FACE_FEATURE_SIZE = 1 + FACE_LANDMARK_COUNT * POINT_DIMS
+HOLISTIC_FRAME_FEATURE_SIZE = FRAME_FEATURE_SIZE + POSE_FEATURE_SIZE + FACE_FEATURE_SIZE
+FEATURE_KIND_HANDS = "mediapipe_two_hand_temporal_v1"
+FEATURE_KIND_HOLISTIC = "mediapipe_holistic_temporal_v1"
 DEFAULT_TARGET_FRAMES = 48
 DEFAULT_TARGET_SECONDS = 1.4
 DEFAULT_MAX_MISSING_SECONDS = 0.18
 DEFAULT_MAX_MISSING_FRAMES = 4
+
+
+@dataclass(frozen=True)
+class FeatureSpec:
+    name: str
+    frame_size: int
+    kind: str
+
+
+HANDS_FEATURE_SPEC = FeatureSpec("hands", FRAME_FEATURE_SIZE, FEATURE_KIND_HANDS)
+HOLISTIC_FEATURE_SPEC = FeatureSpec("holistic", HOLISTIC_FRAME_FEATURE_SIZE, FEATURE_KIND_HOLISTIC)
+FEATURE_SPECS = {
+    HANDS_FEATURE_SPEC.name: HANDS_FEATURE_SPEC,
+    HOLISTIC_FEATURE_SPEC.name: HOLISTIC_FEATURE_SPEC,
+}
 
 
 def point_to_xyz(point: object) -> tuple[float, float, float]:
@@ -49,6 +72,58 @@ def extract_frame_features(hand_landmarks: Sequence[object], handedness: Sequenc
     return slots.reshape(-1)
 
 
+def extract_holistic_frame_features(results: object) -> np.ndarray:
+    hands = extract_holistic_hand_features(results)
+    pose = extract_pose_features(getattr(results, "pose_landmarks", None))
+    face = extract_face_features(getattr(results, "face_landmarks", None))
+    return np.concatenate([hands, pose, face]).astype(np.float32)
+
+
+def extract_holistic_hand_features(results: object) -> np.ndarray:
+    slots = np.zeros((2, HAND_FEATURE_SIZE), dtype=np.float32)
+    left = getattr(results, "left_hand_landmarks", None)
+    right = getattr(results, "right_hand_landmarks", None)
+    if left is not None:
+        slots[0, :] = single_hand_features(left)
+    if right is not None:
+        slots[1, :] = single_hand_features(right)
+    return slots.reshape(-1)
+
+
+def single_hand_features(landmarks: object) -> np.ndarray:
+    features = np.zeros(HAND_FEATURE_SIZE, dtype=np.float32)
+    points = landmark_points(landmarks)
+    if len(points) != HAND_LANDMARK_COUNT:
+        return features
+    features[0] = 1.0
+    features[1:] = normalize_hand(points).reshape(-1)
+    return features
+
+
+def extract_pose_features(landmarks: object | None) -> np.ndarray:
+    features = np.zeros(POSE_FEATURE_SIZE, dtype=np.float32)
+    if landmarks is None:
+        return features
+    points = landmark_points(landmarks)
+    if len(points) != POSE_LANDMARK_COUNT:
+        return features
+    features[0] = 1.0
+    features[1:] = normalize_body_points(points).reshape(-1)
+    return features
+
+
+def extract_face_features(landmarks: object | None) -> np.ndarray:
+    features = np.zeros(FACE_FEATURE_SIZE, dtype=np.float32)
+    if landmarks is None:
+        return features
+    points = landmark_points(landmarks)
+    if len(points) != FACE_LANDMARK_COUNT:
+        return features
+    features[0] = 1.0
+    features[1:] = normalize_body_points(points).reshape(-1)
+    return features
+
+
 def handedness_label(handedness: Sequence[object], index: int) -> str:
     if index >= len(handedness):
         return "Right"
@@ -81,19 +156,36 @@ def normalize_hand(points: Sequence[tuple[float, float, float]]) -> np.ndarray:
     return (pts - wrist) / scale
 
 
+def normalize_body_points(points: Sequence[tuple[float, float, float]]) -> np.ndarray:
+    pts = np.asarray(points, dtype=np.float32)
+    center = pts.mean(axis=0)
+    scale = float(np.std(pts[:, :2]))
+    if scale < 1e-6:
+        scale = 1.0
+    return (pts - center) / scale
+
+
+def get_feature_spec(name: str) -> FeatureSpec:
+    key = name.strip().lower()
+    if key not in FEATURE_SPECS:
+        raise ValueError(f"Unknown landmark pipeline '{name}'. Choose one of: {', '.join(sorted(FEATURE_SPECS))}.")
+    return FEATURE_SPECS[key]
+
+
 def resample_sequence(
     sequence: Sequence[Sequence[float]] | np.ndarray,
     target_frames: int,
     timestamps: Sequence[float] | np.ndarray | None = None,
     window_seconds: float | None = None,
+    frame_feature_size: int = FRAME_FEATURE_SIZE,
 ) -> np.ndarray:
     frames = np.asarray(sequence, dtype=np.float32)
     if frames.size == 0:
-        return np.zeros((target_frames, FRAME_FEATURE_SIZE), dtype=np.float32)
+        return np.zeros((target_frames, frame_feature_size), dtype=np.float32)
     if frames.ndim != 2:
         raise ValueError(f"Expected 2D frame sequence, got shape {frames.shape}.")
-    if frames.shape[1] != FRAME_FEATURE_SIZE:
-        raise ValueError(f"Expected frame feature size {FRAME_FEATURE_SIZE}, got {frames.shape[1]}.")
+    if frames.shape[1] != frame_feature_size:
+        raise ValueError(f"Expected frame feature size {frame_feature_size}, got {frames.shape[1]}.")
     if len(frames) == target_frames and timestamps is None and window_seconds is None:
         return frames.astype(np.float32, copy=False)
     if len(frames) == 1:
@@ -124,9 +216,11 @@ def temporal_feature_vector(
     window_seconds: float | None = None,
     max_missing_seconds: float = DEFAULT_MAX_MISSING_SECONDS,
     max_missing_frames: int = DEFAULT_MAX_MISSING_FRAMES,
+    frame_feature_size: int = FRAME_FEATURE_SIZE,
+    feature_kind: str = FEATURE_KIND_HANDS,
 ) -> np.ndarray:
-    repaired = repair_missing_hand_frames(sequence, timestamps, max_missing_seconds, max_missing_frames)
-    frames = resample_sequence(repaired, target_frames, timestamps, window_seconds)
+    repaired = repair_missing_frames(sequence, timestamps, max_missing_seconds, max_missing_frames, feature_kind)
+    frames = resample_sequence(repaired, target_frames, timestamps, window_seconds, frame_feature_size)
     velocity = np.vstack([np.zeros((1, frames.shape[1]), dtype=np.float32), np.diff(frames, axis=0)])
     stats = np.concatenate(
         [
@@ -138,51 +232,98 @@ def temporal_feature_vector(
     return np.concatenate([frames.reshape(-1), velocity.reshape(-1), stats]).astype(np.float32)
 
 
+def repair_missing_frames(
+    sequence: Sequence[Sequence[float]] | np.ndarray,
+    timestamps: Sequence[float] | np.ndarray | None = None,
+    max_gap_seconds: float = DEFAULT_MAX_MISSING_SECONDS,
+    max_gap_frames: int = DEFAULT_MAX_MISSING_FRAMES,
+    feature_kind: str = FEATURE_KIND_HANDS,
+) -> np.ndarray:
+    if feature_kind == FEATURE_KIND_HOLISTIC:
+        return repair_missing_presence_slots(
+            sequence,
+            slot_layout=[
+                (0, HAND_FEATURE_SIZE),
+                (HAND_FEATURE_SIZE, HAND_FEATURE_SIZE),
+                (FRAME_FEATURE_SIZE, POSE_FEATURE_SIZE),
+                (FRAME_FEATURE_SIZE + POSE_FEATURE_SIZE, FACE_FEATURE_SIZE),
+            ],
+            timestamps=timestamps,
+            max_gap_seconds=max_gap_seconds,
+            max_gap_frames=max_gap_frames,
+        )
+    return repair_missing_hand_frames(sequence, timestamps, max_gap_seconds, max_gap_frames)
+
+
 def repair_missing_hand_frames(
     sequence: Sequence[Sequence[float]] | np.ndarray,
     timestamps: Sequence[float] | np.ndarray | None = None,
     max_gap_seconds: float = DEFAULT_MAX_MISSING_SECONDS,
     max_gap_frames: int = DEFAULT_MAX_MISSING_FRAMES,
 ) -> np.ndarray:
+    return repair_missing_presence_slots(
+        sequence,
+        slot_layout=[(0, HAND_FEATURE_SIZE), (HAND_FEATURE_SIZE, HAND_FEATURE_SIZE)],
+        timestamps=timestamps,
+        max_gap_seconds=max_gap_seconds,
+        max_gap_frames=max_gap_frames,
+    )
+
+
+def repair_missing_presence_slots(
+    sequence: Sequence[Sequence[float]] | np.ndarray,
+    slot_layout: Sequence[tuple[int, int]],
+    timestamps: Sequence[float] | np.ndarray | None = None,
+    max_gap_seconds: float = DEFAULT_MAX_MISSING_SECONDS,
+    max_gap_frames: int = DEFAULT_MAX_MISSING_FRAMES,
+) -> np.ndarray:
     frames = np.asarray(sequence, dtype=np.float32)
     if frames.size == 0:
-        return np.zeros((0, FRAME_FEATURE_SIZE), dtype=np.float32)
-    if frames.ndim != 2 or frames.shape[1] != FRAME_FEATURE_SIZE:
+        return frames
+    if frames.ndim != 2:
         return frames
 
     repaired = frames.copy()
     times = clean_timestamps(timestamps, len(frames)) if timestamps is not None else None
-    slots = repaired.reshape(len(repaired), 2, HAND_FEATURE_SIZE)
-
-    for hand_index in range(2):
-        present = slots[:, hand_index, 0] > 0.5
-        index = 0
-        while index < len(present):
-            if present[index]:
-                index += 1
-                continue
-
-            start = index
-            while index < len(present) and not present[index]:
-                index += 1
-            end = index
-            gap_len = end - start
-
-            prev_index = start - 1 if start > 0 and present[start - 1] else None
-            next_index = end if end < len(present) and present[end] else None
-            if prev_index is None and next_index is None:
-                continue
-
-            if gap_len > max_gap_frames:
-                continue
-            if times is not None and gap_duration_seconds(times, start, end) > max_gap_seconds:
-                continue
-
-            source_index = prev_index if prev_index is not None else next_index
-            if source_index is not None:
-                slots[start:end, hand_index, :] = slots[source_index, hand_index, :]
-
+    for start_col, slot_size in slot_layout:
+        if start_col + slot_size > frames.shape[1]:
+            continue
+        repair_slot_gap(repaired[:, start_col : start_col + slot_size], times, max_gap_seconds, max_gap_frames)
     return repaired
+
+
+def repair_slot_gap(
+    slot_view: np.ndarray,
+    times: np.ndarray | None,
+    max_gap_seconds: float,
+    max_gap_frames: int,
+) -> None:
+    present = slot_view[:, 0] > 0.5
+    index = 0
+    while index < len(present):
+        if present[index]:
+            index += 1
+            continue
+
+        start = index
+        while index < len(present) and not present[index]:
+            index += 1
+        end = index
+        gap_len = end - start
+
+        prev_index = start - 1 if start > 0 and present[start - 1] else None
+        next_index = end if end < len(present) and present[end] else None
+        if prev_index is None and next_index is None:
+            continue
+
+        if gap_len > max_gap_frames:
+            continue
+        if times is not None and gap_duration_seconds(times, start, end) > max_gap_seconds:
+            continue
+
+        source_index = prev_index if prev_index is not None else next_index
+        if source_index is not None:
+            slot_view[start:end, :] = slot_view[source_index, :]
 
 
 def clean_timestamps(timestamps: Sequence[float] | np.ndarray, expected_length: int) -> np.ndarray:

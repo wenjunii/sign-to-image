@@ -5,8 +5,11 @@ import numpy as np
 from temporal_features import (
     DEFAULT_TARGET_FRAMES,
     FRAME_FEATURE_SIZE,
+    HOLISTIC_FRAME_FEATURE_SIZE,
     clean_timestamps,
     extract_frame_features,
+    extract_holistic_frame_features,
+    get_feature_spec,
     repair_missing_hand_frames,
     resample_sequence,
     safe_label_dir,
@@ -23,8 +26,16 @@ class FakePoint:
 
 
 class FakeLandmarks:
+    def __init__(self, count=21):
+        self.landmark = [FakePoint(index * 0.01, index * 0.02, index * 0.001) for index in range(count)]
+
+
+class FakeHolisticResults:
     def __init__(self):
-        self.landmark = [FakePoint(index * 0.01, index * 0.02, index * 0.001) for index in range(21)]
+        self.left_hand_landmarks = FakeLandmarks(21)
+        self.right_hand_landmarks = FakeLandmarks(21)
+        self.pose_landmarks = FakeLandmarks(33)
+        self.face_landmarks = FakeLandmarks(468)
 
 
 class TemporalFeatureTests(unittest.TestCase):
@@ -34,6 +45,17 @@ class TemporalFeatureTests(unittest.TestCase):
         self.assertEqual(features.shape, (FRAME_FEATURE_SIZE,))
         self.assertTrue(np.any(features))
         self.assertFalse(np.isnan(features).any())
+
+    def test_extract_holistic_features_has_fixed_shape(self):
+        features = extract_holistic_frame_features(FakeHolisticResults())
+
+        self.assertEqual(features.shape, (HOLISTIC_FRAME_FEATURE_SIZE,))
+        self.assertTrue(np.any(features))
+        self.assertFalse(np.isnan(features).any())
+
+    def test_feature_specs_are_named(self):
+        self.assertEqual(get_feature_spec("hands").frame_size, FRAME_FEATURE_SIZE)
+        self.assertEqual(get_feature_spec("holistic").frame_size, HOLISTIC_FRAME_FEATURE_SIZE)
 
     def test_resamples_and_flattens_temporal_sequence(self):
         sequence = np.vstack(

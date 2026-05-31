@@ -5,8 +5,6 @@ import pickle
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Sequence
-
 import numpy as np
 
 from gesture_rules import GestureResult
@@ -14,8 +12,8 @@ from temporal_features import (
     DEFAULT_MAX_MISSING_SECONDS,
     DEFAULT_TARGET_FRAMES,
     DEFAULT_TARGET_SECONDS,
+    FEATURE_KIND_HANDS,
     FRAME_FEATURE_SIZE,
-    extract_frame_features,
     temporal_feature_vector,
 )
 
@@ -26,12 +24,14 @@ class TemporalModelInfo:
     labels: list[str]
     target_frames: int
     target_seconds: float
+    feature_kind: str
 
 
 class TemporalModelRecognizer:
     def __init__(
         self,
         model_path: str,
+        frame_extractor,
         min_buffer_ratio: float = 0.6,
         max_missing_seconds: float = DEFAULT_MAX_MISSING_SECONDS,
     ):
@@ -50,10 +50,14 @@ class TemporalModelRecognizer:
         self.target_seconds = float(payload.get("target_seconds", DEFAULT_TARGET_SECONDS))
         self.max_missing_seconds = float(payload.get("max_missing_seconds", max_missing_seconds))
         self.frame_feature_size = int(payload.get("frame_feature_size", FRAME_FEATURE_SIZE))
-        if self.frame_feature_size != FRAME_FEATURE_SIZE:
+        self.feature_kind = str(payload.get("feature_kind", FEATURE_KIND_HANDS))
+        self.frame_extractor = frame_extractor
+
+        sample = np.asarray(self.frame_extractor(), dtype=np.float32)
+        if sample.shape != (self.frame_feature_size,):
             raise RuntimeError(
                 f"Temporal model expects frame size {self.frame_feature_size}, "
-                f"but this app produces {FRAME_FEATURE_SIZE}."
+                f"but the selected pipeline produces shape {sample.shape}."
             )
 
         self.buffer: deque[tuple[float, np.ndarray]] = deque()
@@ -61,11 +65,17 @@ class TemporalModelRecognizer:
         self.min_buffer_seconds = self.target_seconds * min_buffer_ratio
         self.max_buffer_frames = self.target_frames * 4
         self.last_hand_at: float | None = None
-        self.info = TemporalModelInfo(model_path, self.labels, self.target_frames, self.target_seconds)
+        self.info = TemporalModelInfo(
+            model_path,
+            self.labels,
+            self.target_frames,
+            self.target_seconds,
+            self.feature_kind,
+        )
 
-    def recognize_frame(self, hand_landmarks: Sequence[object], handedness: Sequence[object]) -> GestureResult | None:
+    def recognize_frame(self, *extractor_args) -> GestureResult | None:
         now = time.monotonic()
-        features = extract_frame_features(hand_landmarks, handedness)
+        features = np.asarray(self.frame_extractor(*extractor_args), dtype=np.float32)
         has_hand = bool(np.any(features))
 
         if has_hand:
@@ -94,6 +104,8 @@ class TemporalModelRecognizer:
             timestamps=timestamps,
             window_seconds=self.target_seconds,
             max_missing_seconds=self.max_missing_seconds,
+            frame_feature_size=self.frame_feature_size,
+            feature_kind=self.feature_kind,
         )
         label, confidence = self._predict(vector)
         if label is None:

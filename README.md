@@ -15,6 +15,7 @@ It references the structure of `voice-to-visual-sdtd`, but swaps Whisper/audio c
 - Live webcam capture with MediaPipe hand landmarks.
 - Rule-based ASL fingerspelling prototype for static handshapes: `A B C D E F I L O U V W Y`.
 - Trained temporal model path for signer-specific gesture clips.
+- Optional MediaPipe Holistic pipeline with hands, pose, and face landmarks.
 - Two-hand commands:
   - two open palms: send prompt
   - open palm plus closed fist: insert space
@@ -31,8 +32,22 @@ The default `rule_based` recognizer is useful for testing the full sign-to-image
 loop and simple fingerspelling.
 
 The `temporal_model` recognizer loads a trained signer-specific classifier from
-`SIGN_MODEL_PATH`. It uses short MediaPipe hand landmark clips instead of a
-single static handshape, so it can learn signs with motion.
+`SIGN_MODEL_PATH`. It uses short MediaPipe landmark clips instead of a single
+static handshape, so it can learn signs with motion.
+
+## Landmark Pipelines
+
+The default `hands` pipeline uses MediaPipe Hands and keeps the existing
+two-hand feature format. It is lighter and is the best first choice for a
+controlled sign-to-prompt vocabulary.
+
+The optional `holistic` pipeline uses MediaPipe Holistic and adds pose and face
+landmarks to the same temporal workflow. This can help with signs where body
+position, shoulders, head movement, or facial expression matter, but it is
+heavier and needs its own training clips and model.
+
+Hands and Holistic models are not interchangeable. The collection, training,
+and live run steps must use the same landmark pipeline.
 
 ## Signer-Specific Vocabulary
 
@@ -198,6 +213,12 @@ If your camera is not index `0`:
 .\run.ps1 --camera 1
 ```
 
+To run a trained Holistic model:
+
+```powershell
+.\run.ps1 --recognition-backend temporal_model --landmark-pipeline holistic --model-path models/holistic_temporal_sign_model.pkl --commit-mode manual
+```
+
 ## Trained Temporal Model Workflow
 
 Collect clips for each sign token you want the model to recognize. Use single
@@ -207,6 +228,12 @@ letters like `A`, or word tokens like `WORD:river`.
 .\collect.ps1 -Label A -Count 30
 .\collect.ps1 -Label B -Count 30
 .\collect.ps1 -Label WORD:river -Count 30
+```
+
+To collect with MediaPipe Holistic instead of MediaPipe Hands:
+
+```powershell
+.\collect.ps1 -Label WORD:river -Pipeline holistic -Count 30
 ```
 
 In the collection window, press `r` to record each clip and `q` to exit. Aim for
@@ -222,10 +249,17 @@ Train the temporal classifier:
 The trained model is saved to `models/temporal_sign_model.pkl`, which is also
 ignored by Git because it is generated from local signer data.
 
+To train a Holistic model:
+
+```powershell
+.\train.ps1 -Pipeline holistic -Output models/holistic_temporal_sign_model.pkl
+```
+
 Enable it in `.env`:
 
 ```env
 SIGN_RECOGNITION_BACKEND=temporal_model
+SIGN_LANDMARK_PIPELINE=hands
 SIGN_MODEL_PATH=models/temporal_sign_model.pkl
 ```
 
@@ -269,6 +303,7 @@ OSC_IP=127.0.0.1
 OSC_PORT=7001
 CAMERA_INDEX=0
 SIGN_RECOGNITION_BACKEND=rule_based
+SIGN_LANDMARK_PIPELINE=hands
 SIGN_MODEL_PATH=models/temporal_sign_model.pkl
 SIGN_COMMIT_MODE=auto
 SIGN_HOLD_SECONDS=0.75
