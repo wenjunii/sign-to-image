@@ -31,7 +31,7 @@ GISLR_POSE_OFFSET = GISLR_LEFT_HAND_OFFSET + GISLR_HAND_LANDMARK_COUNT
 GISLR_RIGHT_HAND_OFFSET = GISLR_POSE_OFFSET + GISLR_POSE_LANDMARK_COUNT
 DEFAULT_GISLR_TARGET_FRAMES = 64
 DEFAULT_GISLR_WINDOW_SECONDS = 1.6
-DEFAULT_GISLR_THREADS = 4
+DEFAULT_GISLR_THREADS = 1
 
 
 @dataclass
@@ -187,7 +187,8 @@ class GislrTfliteModel:
             raise RuntimeError(f"GISLR/PopSign TFLite model not found at {model_path}.")
 
         interpreter_cls, runtime = load_tflite_interpreter()
-        self.num_threads = max(1, int(num_threads))
+        requested_threads = max(1, int(num_threads))
+        self.num_threads = 1 if runtime == "ai_edge_litert" else requested_threads
         self.interpreter = create_tflite_interpreter(interpreter_cls, model_path, self.num_threads)
         self.runtime = runtime
         self.signature_runner = None
@@ -197,26 +198,12 @@ class GislrTfliteModel:
         self.output_details = []
         self.cached_input_variant: str | None = None
 
-        signatures = self.interpreter.get_signature_list()
-        if signatures:
-            signature_name = "serving_default" if "serving_default" in signatures else next(iter(signatures))
-            signature = signatures[signature_name]
-            inputs = signature.get("inputs", [])
-            outputs = signature.get("outputs", [])
-            if len(inputs) != 1:
-                raise RuntimeError("GISLR/PopSign TFLite signatures with more than one input are not supported.")
-            if not outputs:
-                raise RuntimeError("GISLR/PopSign TFLite signature has no outputs.")
-            self.signature_input = inputs[0]
-            self.signature_output = outputs[0]
-            self.signature_runner = self.interpreter.get_signature_runner(signature_name)
-        else:
-            self.input_details = self.interpreter.get_input_details()
-            self.output_details = self.interpreter.get_output_details()
-            if len(self.input_details) != 1:
-                raise RuntimeError("GISLR/PopSign TFLite models with more than one input are not supported.")
-            if not self.output_details:
-                raise RuntimeError("GISLR/PopSign TFLite model has no outputs.")
+        self.input_details = self.interpreter.get_input_details()
+        self.output_details = self.interpreter.get_output_details()
+        if len(self.input_details) != 1:
+            raise RuntimeError("GISLR/PopSign TFLite models with more than one input are not supported.")
+        if not self.output_details:
+            raise RuntimeError("GISLR/PopSign TFLite model has no outputs.")
 
     def predict(self, sequence: np.ndarray) -> np.ndarray:
         if self.signature_runner is not None:
@@ -271,6 +258,13 @@ def input_candidates(sequence: np.ndarray) -> list[tuple[str, np.ndarray]]:
 
 def load_tflite_interpreter():
     try:
+        from ai_edge_litert.interpreter import Interpreter
+    except ImportError:
+        pass
+    else:
+        return Interpreter, "ai_edge_litert"
+
+    try:
         from tflite_runtime.interpreter import Interpreter
     except ImportError:
         try:
@@ -278,15 +272,27 @@ def load_tflite_interpreter():
         except ImportError as exc:
             raise RuntimeError(
                 "GISLR/PopSign backend needs a TensorFlow Lite runtime. "
-                "Install either tensorflow or tflite-runtime in the project venv."
+                "Install ai-edge-litert, tensorflow, or tflite-runtime in the project venv."
             ) from exc
         return Interpreter, "tensorflow.lite"
     return Interpreter, "tflite_runtime"
 
 
 def create_tflite_interpreter(interpreter_cls, model_path: str, num_threads: int):
+    kwargs = {
+        "model_path": model_path,
+        "num_threads": max(1, int(num_threads)),
+    }
+    if getattr(interpreter_cls, "__module__", "").startswith("ai_edge_litert"):
+        try:
+            from ai_edge_litert.interpreter import OpResolverType
+        except ImportError:
+            pass
+        else:
+            kwargs["experimental_op_resolver_type"] = OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES
+
     try:
-        return interpreter_cls(model_path=model_path, num_threads=max(1, int(num_threads)))
+        return interpreter_cls(**kwargs)
     except TypeError:
         return interpreter_cls(model_path=model_path)
 

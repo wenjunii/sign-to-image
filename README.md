@@ -203,10 +203,11 @@ Copy-Item .env.example .env
 ```
 
 For the optional GISLR / PopSign TFLite backend, install one TensorFlow Lite
-runtime in the same venv:
+runtime in the same venv. On Windows, the recommended lightweight runtime is
+LiteRT:
 
 ```powershell
-pip install tensorflow
+pip install ai-edge-litert
 ```
 
 You can also use the Windows helper scripts, which create `.venv` and install
@@ -334,7 +335,8 @@ This backend is CPU-capable by design. The RTX 3080 Ti is still useful for
 StreamDiffusionTD image generation, but the current GISLR / PopSign recognition
 path does not use CUDA or a GPU delegate. If CPU load is too high, try lowering
 camera resolution, shortening the window only if the model supports it, or
-tuning `SIGN_GISLR_THREADS`.
+tuning camera/preview settings. The LiteRT runtime currently uses one CPU
+thread for this model because higher thread counts can be unstable on Windows.
 
 Useful settings:
 
@@ -345,13 +347,11 @@ SIGN_MODEL_PATH=models/gislr_model.tflite
 SIGN_GISLR_LABEL_MAP=models/sign_to_prediction_index_map.json
 SIGN_GISLR_TARGET_FRAMES=64
 SIGN_GISLR_WINDOW_SECONDS=1.6
-SIGN_GISLR_THREADS=4
+SIGN_GISLR_THREADS=1
 ```
 
 If the model expects a different frame count or time window, adjust
-`SIGN_GISLR_TARGET_FRAMES` and `SIGN_GISLR_WINDOW_SECONDS`. If the machine is
-dropping frames, try `SIGN_GISLR_THREADS=2`, `4`, or `8` and keep the value that
-gives the smoothest full webcam -> prompt -> StreamDiffusionTD loop.
+`SIGN_GISLR_TARGET_FRAMES` and `SIGN_GISLR_WINDOW_SECONDS`.
 
 The Python entry points are still available if you want advanced options:
 
@@ -389,7 +389,7 @@ SIGN_MODEL_PATH=models/temporal_sign_model.pkl
 SIGN_GISLR_LABEL_MAP=models/gislr_label_map.json
 SIGN_GISLR_TARGET_FRAMES=64
 SIGN_GISLR_WINDOW_SECONDS=1.6
-SIGN_GISLR_THREADS=4
+SIGN_GISLR_THREADS=1
 SIGN_COMMIT_MODE=auto
 SIGN_HOLD_SECONDS=0.75
 AUTO_SEND_PROMPT=true

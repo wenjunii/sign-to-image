@@ -6,6 +6,7 @@ python-osc
 scikit-learn
 
 # Optional GISLR/PopSign TFLite backend: install one runtime only when needed.
+# ai-edge-litert
 # tensorflow
 # tflite-runtime
 # onnxruntime
