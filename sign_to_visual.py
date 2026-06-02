@@ -526,7 +526,7 @@ def make_config(args: argparse.Namespace) -> PipelineConfig:
             getattr(args, "landmark_pipeline", None) or os.environ.get("SIGN_LANDMARK_PIPELINE", "hands")
         ).strip().lower(),
         gislr_label_map_path=getattr(args, "label_map", None)
-        or os.environ.get("SIGN_GISLR_LABEL_MAP", "models/gislr_label_map.json"),
+        or os.environ.get("SIGN_GISLR_LABEL_MAP", "models/sign_to_prediction_index_map.json"),
         gislr_target_frames=(
             args.gislr_target_frames
             if getattr(args, "gislr_target_frames", None) is not None

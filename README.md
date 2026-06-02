@@ -210,6 +210,14 @@ LiteRT:
 pip install ai-edge-litert
 ```
 
+Or use the GISLR setup helper, which installs LiteRT, downloads the pretrained
+model and label map into `models/`, validates the model, and updates local
+`.env` for manual GISLR testing:
+
+```powershell
+.\setup_gislr.ps1
+```
+
 You can also use the Windows helper scripts, which create `.venv` and install
 missing dependencies automatically:
 
@@ -310,6 +318,20 @@ This is the pretrained-model path. It is useful when you have a GISLR /
 PopSign-compatible `.tflite` model and a label map, such as Kaggle's
 `sign_to_prediction_index_map.json`.
 
+For the helper quick-start path, run:
+
+```powershell
+.\setup_gislr.ps1
+```
+
+The helper downloads the MIT-licensed Hugging Face
+[`sign/kaggle-asl-signs-1st-place`](https://huggingface.co/sign/kaggle-asl-signs-1st-place) model:
+
+```text
+models/gislr_model.tflite
+models/sign_to_prediction_index_map.json
+```
+
 Put local model files under `models/`:
 
 ```text
@@ -324,6 +346,12 @@ Then run:
 
 ```powershell
 .\run.ps1 --recognition-backend gislr_tflite --model-path models/gislr_model.tflite --label-map models/sign_to_prediction_index_map.json --commit-mode manual
+```
+
+If `.\setup_gislr.ps1` updated `.env`, this shorter command is enough:
+
+```powershell
+.\run.ps1
 ```
 
 The backend automatically switches to MediaPipe Holistic, keeps a short
@@ -386,7 +414,7 @@ CAMERA_INDEX=0
 SIGN_RECOGNITION_BACKEND=rule_based
 SIGN_LANDMARK_PIPELINE=hands
 SIGN_MODEL_PATH=models/temporal_sign_model.pkl
-SIGN_GISLR_LABEL_MAP=models/gislr_label_map.json
+SIGN_GISLR_LABEL_MAP=models/sign_to_prediction_index_map.json
 SIGN_GISLR_TARGET_FRAMES=64
 SIGN_GISLR_WINDOW_SECONDS=1.6
 SIGN_GISLR_THREADS=1
