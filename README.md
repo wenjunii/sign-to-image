@@ -1,5 +1,7 @@
 # Sign-to-Visual Pipeline for StreamDiffusionTD
 
+Project repository: [github.com/wenjunii/sign-to-image](https://github.com/wenjunii/sign-to-image)
+
 Yes, there is a way to do it: replace the voice transcription stage with a camera-based sign recognition stage, then keep the same OSC prompt bridge into TouchDesigner / StreamDiffusionTD.
 
 This project is a starter implementation of:
@@ -424,6 +426,27 @@ AUTO_SEND_PROMPT=true
 ```
 
 Set `AUTO_SEND_PROMPT=false` if you only want prompts sent when you press Enter or use the two-open-palms send command.
+
+## GitHub Sync
+
+The canonical public repository is:
+
+```text
+https://github.com/wenjunii/sign-to-image
+```
+
+To verify the local `origin` remote points to that repository and fetch the
+latest remote state:
+
+```powershell
+.\sync_github.ps1
+```
+
+To push the current `main` branch:
+
+```powershell
+.\sync_github.ps1 -Push
+```
 
 ## How To Make It Better
 
